@@ -8,6 +8,8 @@ use crate::vmd_core::VmdConfig;
 #[pyclass(name = "RSVMDProcessor")]
 pub struct PyRSVMDProcessor {
     inner: RustRsvmdProcessor,
+    last_iterations: usize,
+    last_converged: bool,
 }
 
 #[pymethods]
@@ -38,6 +40,8 @@ impl PyRSVMDProcessor {
         };
         PyRSVMDProcessor {
             inner: RustRsvmdProcessor::new(config),
+            last_iterations: 0,
+            last_converged: false,
         }
     }
 
@@ -74,6 +78,9 @@ impl PyRSVMDProcessor {
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?
         };
 
+        self.last_iterations = output.iterations;
+        self.last_converged = output.converged;
+
         let k = output.modes.len();
         let n = if k > 0 { output.modes[0].len() } else { 0 };
 
@@ -103,6 +110,18 @@ impl PyRSVMDProcessor {
     fn initialized(&self) -> bool {
         self.inner.initialized()
     }
+
+    /// Number of ADMM iterations used in the last update call.
+    #[getter]
+    fn last_iterations(&self) -> usize {
+        self.last_iterations
+    }
+
+    /// Whether the last update call converged.
+    #[getter]
+    fn last_converged(&self) -> bool {
+        self.last_converged
+    }
 }
 
 #[pyclass(name = "PORSVMDProcessor")]
@@ -110,6 +129,8 @@ pub struct PyPORSVMDProcessor {
     inner: RustPoRsvmdProcessor,
     window_len: usize,
     step_size: usize,
+    last_iterations: usize,
+    last_converged: bool,
 }
 
 #[pymethods]
@@ -149,6 +170,8 @@ impl PyPORSVMDProcessor {
             inner: RustPoRsvmdProcessor::new(po_config),
             window_len,
             step_size,
+            last_iterations: 0,
+            last_converged: false,
         }
     }
 
@@ -181,6 +204,9 @@ impl PyPORSVMDProcessor {
             self.inner.update(slice)
                 .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?
         };
+
+        self.last_iterations = output.iterations;
+        self.last_converged = output.converged;
 
         let k = output.modes.len();
         let n = if k > 0 { output.modes[0].len() } else { 0 };
@@ -215,6 +241,18 @@ impl PyPORSVMDProcessor {
     #[getter]
     fn initialized(&self) -> bool {
         self.inner.initialized()
+    }
+
+    /// Number of ADMM iterations used in the last update call.
+    #[getter]
+    fn last_iterations(&self) -> usize {
+        self.last_iterations
+    }
+
+    /// Whether the last update call converged.
+    #[getter]
+    fn last_converged(&self) -> bool {
+        self.last_converged
     }
 }
 

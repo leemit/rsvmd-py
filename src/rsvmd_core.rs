@@ -639,6 +639,122 @@ mod tests {
     }
 
     #[test]
+    fn test_warm_start_fewer_iterations() {
+        let n = 256;
+        let total = n + 10;
+        let signal = make_signal(total);
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 3,
+            tau: 0.1,
+            tol: 1e-7,
+            window_len: n,
+            step_size: 1,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        let cold = proc.initialize(&signal[..n]).unwrap();
+        let cold_iters = cold.iterations;
+
+        let mut warm_iters = Vec::new();
+        for i in 0..10 {
+            let output = proc.update(&signal[n + i..n + i + 1]).unwrap();
+            warm_iters.push(output.iterations);
+        }
+
+        let avg_warm = warm_iters.iter().sum::<usize>() as f64 / warm_iters.len() as f64;
+        assert!(
+            avg_warm <= cold_iters as f64,
+            "Average warm iterations ({:.1}) should be <= cold start ({})",
+            avg_warm, cold_iters
+        );
+    }
+
+    #[test]
+    fn test_center_freq_stability_across_streaming() {
+        let n = 256;
+        let total = n + 20;
+        let dt = 1.0 / n as f64;
+        let signal: Vec<f64> = (0..total)
+            .map(|i| {
+                let t = i as f64 * dt;
+                (2.0 * PI * 20.0 * t).sin() + 0.5 * (2.0 * PI * 80.0 * t).sin()
+            })
+            .collect();
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 2,
+            tau: 0.1,
+            tol: 1e-7,
+            window_len: n,
+            step_size: 1,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        proc.initialize(&signal[..n]).unwrap();
+
+        let expected = [20.0 / n as f64, 80.0 / n as f64];
+        let tol = 15.0 / n as f64;
+
+        for i in 0..20 {
+            let output = proc.update(&signal[n + i..n + i + 1]).unwrap();
+            let mut sorted = output.center_freqs.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+            for (j, (&actual, &exp)) in sorted.iter().zip(expected.iter()).enumerate() {
+                assert!(
+                    (actual - exp).abs() < tol,
+                    "Frame {}: center freq {} = {:.6}, expected {:.6} (tol={:.6})",
+                    i, j, actual, exp, tol
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_long_streaming_200_frames() {
+        let n = 256;
+        let total = n + 200;
+        let signal = make_signal(total);
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 3,
+            tau: 0.1,
+            tol: 1e-7,
+            window_len: n,
+            step_size: 1,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        proc.initialize(&signal[..n]).unwrap();
+
+        for i in 0..200 {
+            let output = proc.update(&signal[n + i..n + i + 1]).unwrap();
+            assert_eq!(output.modes.len(), 3);
+            assert_eq!(output.modes[0].len(), n);
+            for mode in &output.modes {
+                for &v in mode {
+                    assert!(!v.is_nan(), "NaN at frame {}", i);
+                    assert!(v.is_finite(), "Inf at frame {}", i);
+                }
+            }
+            for &f in &output.center_freqs {
+                assert!(!f.is_nan(), "NaN center freq at frame {}", i);
+                assert!(f >= 0.0, "Negative center freq at frame {}", i);
+            }
+        }
+    }
+
+    #[test]
     fn test_fft_reset_interval() {
         let n = 128;
         let total = n + 20;
