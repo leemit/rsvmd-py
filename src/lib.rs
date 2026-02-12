@@ -8,8 +8,8 @@ pub mod scale_space;
 pub mod sliding_dft;
 pub mod vmd_core;
 
-#[pymodule]
-fn rsvmd(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pymodule(name = "_rsvmd")]
+fn rsvmd_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     python::register_module(m)?;
     Ok(())
 }

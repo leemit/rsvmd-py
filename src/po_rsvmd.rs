@@ -60,35 +60,34 @@ impl PoRsvmdProcessor {
     }
 
     /// Cold start: same as RSVMD.
-    pub fn initialize(&mut self, window: &[f64]) -> RsvmdOutput {
+    pub fn initialize(&mut self, window: &[f64]) -> Result<RsvmdOutput, String> {
         let start = Instant::now();
-        let output = self.inner.initialize(window);
+        let output = self.inner.initialize(window)?;
         self.prev_iteration_time = Some(start.elapsed().as_secs_f64());
         self.prev_prev_iteration_time = None;
-        output
+        Ok(output)
     }
 
     /// Update with error mutation detection and adaptive gamma.
-    pub fn update(&mut self, new_samples: &[f64]) -> RsvmdOutput {
+    pub fn update(&mut self, new_samples: &[f64]) -> Result<RsvmdOutput, String> {
         if !self.inner.initialized() {
             if new_samples.len() == self.inner.config().window_len {
                 return self.initialize(new_samples);
             }
-            panic!(
+            return Err(format!(
                 "Processor not initialized. First call must provide {} samples.",
                 self.inner.config().window_len
-            );
+            ));
         }
 
         let k = self.inner.config().k;
         let s = new_samples.len();
-        assert_eq!(
-            s,
-            self.inner.config().step_size,
-            "Expected {} samples, got {}",
-            self.inner.config().step_size,
-            s
-        );
+        if s != self.inner.config().step_size {
+            return Err(format!(
+                "Expected {} samples, got {}",
+                self.inner.config().step_size, s
+            ));
+        }
 
         // --- Sliding DFT update ---
         // Get old samples before mutating the buffer
@@ -107,21 +106,21 @@ impl PoRsvmdProcessor {
 
         // Update SDFT
         {
-            let sdft = self.inner.sdft_mut().unwrap();
-            sdft.slide_block(new_samples, &old_samples);
+            let sdft = self.inner.sdft_mut().ok_or("SDFT not initialized")?;
+            sdft.slide_block(new_samples, &old_samples)?;
         }
 
         // Check if FFT reset is needed (separate borrow scope)
         {
-            let needs_reset = self.inner.sdft().unwrap().needs_reset();
+            let needs_reset = self.inner.sdft().ok_or("SDFT not initialized")?.needs_reset();
             if needs_reset {
                 let buf: Vec<f64> = self.inner.window_buffer().iter().copied().collect();
-                self.inner.sdft_mut().unwrap().reset_from_buffer(&buf);
+                let _ = self.inner.sdft_mut().ok_or("SDFT not initialized")?.reset_from_buffer(&buf);
             }
         }
 
         let signal_spectrum: Vec<Complex64> =
-            self.inner.sdft().unwrap().spectrum().to_vec();
+            self.inner.sdft().ok_or("SDFT not initialized")?.spectrum().to_vec();
 
         // --- Adaptive center frequency initialization ---
         let power_spectrum: Vec<f64> = signal_spectrum.iter().map(|c| c.norm_sqr()).collect();
@@ -163,12 +162,12 @@ impl PoRsvmdProcessor {
         self.inner.state_mut().center_freqs = result.center_freqs.clone();
         self.inner.state_mut().lambda = result.lambda;
 
-        RsvmdOutput {
+        Ok(RsvmdOutput {
             modes,
             center_freqs: result.center_freqs,
             iterations: result.iterations,
             converged: result.converged,
-        }
+        })
     }
 
     /// ADMM solve with error mutation detection.
@@ -397,7 +396,7 @@ mod tests {
         );
 
         let mut proc = PoRsvmdProcessor::new(config);
-        let output = proc.initialize(&signal);
+        let output = proc.initialize(&signal).unwrap();
 
         assert_eq!(output.modes.len(), 3);
         assert_eq!(output.center_freqs.len(), 3);
@@ -424,10 +423,10 @@ mod tests {
         );
 
         let mut proc = PoRsvmdProcessor::new(config);
-        proc.initialize(&signal[..n]);
+        proc.initialize(&signal[..n]).unwrap();
 
         for i in 0..5 {
-            let output = proc.update(&signal[n + i..n + i + 1]);
+            let output = proc.update(&signal[n + i..n + i + 1]).unwrap();
             assert_eq!(output.modes.len(), 3);
         }
     }

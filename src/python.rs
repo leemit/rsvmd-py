@@ -54,6 +54,7 @@ impl PyRSVMDProcessor {
         let output = if !self.inner.initialized() {
             if slice.len() == self.inner.config().window_len {
                 self.inner.initialize(slice)
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?
             } else {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "First call must provide exactly {} samples (window_len), got {}",
@@ -70,6 +71,7 @@ impl PyRSVMDProcessor {
                 )));
             }
             self.inner.update(slice)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?
         };
 
         let k = output.modes.len();
@@ -167,6 +169,7 @@ impl PyPORSVMDProcessor {
                 )));
             }
             self.inner.initialize(slice)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?
         } else {
             if slice.len() != self.step_size {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -176,6 +179,7 @@ impl PyPORSVMDProcessor {
                 )));
             }
             self.inner.update(slice)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?
         };
 
         let k = output.modes.len();

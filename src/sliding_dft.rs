@@ -73,13 +73,18 @@ impl SlidingDft {
     }
 
     /// Slide by s samples: O(N*s) update via Updating Vector Transform.
-    pub fn slide_block(&mut self, new_samples: &[f64], old_samples: &[f64]) {
+    pub fn slide_block(&mut self, new_samples: &[f64], old_samples: &[f64]) -> Result<(), String> {
         let s = new_samples.len();
-        assert_eq!(s, old_samples.len(), "new_samples and old_samples must have same length");
+        if s != old_samples.len() {
+            return Err(format!(
+                "new_samples length ({}) must match old_samples length ({})",
+                s, old_samples.len()
+            ));
+        }
 
         if s == 1 {
             self.slide_one(new_samples[0], old_samples[0]);
-            return;
+            return Ok(());
         }
 
         for k in 0..self.n {
@@ -98,6 +103,7 @@ impl SlidingDft {
             self.bins[k] = tw_s * (self.bins[k] + d);
         }
         self.frame_count += 1;
+        Ok(())
     }
 
     /// Compute twiddles[k]^power efficiently.
@@ -107,10 +113,16 @@ impl SlidingDft {
     }
 
     /// Force full FFT recomputation from window buffer (reset drift).
-    pub fn reset_from_buffer(&mut self, window: &[f64]) {
-        assert_eq!(window.len(), self.n, "Window length must match N");
+    pub fn reset_from_buffer(&mut self, window: &[f64]) -> Result<(), String> {
+        if window.len() != self.n {
+            return Err(format!(
+                "Window length ({}) must match N ({})",
+                window.len(), self.n
+            ));
+        }
         self.bins = Self::compute_fft(window);
         self.frame_count = 0;
+        Ok(())
     }
 
     /// Check if periodic reset is due.
@@ -217,7 +229,7 @@ mod tests {
 
         // Block slide
         let mut sdft_block = SlidingDft::new(initial, 1.0, 0);
-        sdft_block.slide_block(&signal[n..n + s], &signal[0..s]);
+        sdft_block.slide_block(&signal[n..n + s], &signal[0..s]).unwrap();
 
         // Compare
         for k in 0..n {
@@ -272,7 +284,7 @@ mod tests {
 
         // Reset
         let new_window = &signal[50..50 + n];
-        sdft.reset_from_buffer(new_window);
+        sdft.reset_from_buffer(new_window).unwrap();
 
         // Should match full FFT exactly
         let expected = SlidingDft::compute_fft(new_window);

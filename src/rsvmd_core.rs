@@ -44,14 +44,14 @@ impl RsvmdProcessor {
 
     /// Cold start: accepts exactly window_len samples.
     /// Computes full FFT, runs scale-space peak picking, runs VMD to convergence.
-    pub fn initialize(&mut self, window: &[f64]) -> RsvmdOutput {
+    pub fn initialize(&mut self, window: &[f64]) -> Result<RsvmdOutput, String> {
         let n = self.config.window_len;
-        assert_eq!(
-            window.len(),
-            n,
-            "Initial window must be exactly {} samples",
-            n
-        );
+        if window.len() != n {
+            return Err(format!(
+                "Initial window must be exactly {} samples, got {}",
+                n, window.len()
+            ));
+        }
 
         // Store window buffer
         self.window_buffer.clear();
@@ -64,7 +64,8 @@ impl RsvmdProcessor {
             self.config.fft_reset_interval,
         ));
 
-        let signal_spectrum: Vec<Complex64> = self.sdft.as_ref().unwrap().spectrum().to_vec();
+        let signal_spectrum: Vec<Complex64> = self.sdft.as_ref()
+            .ok_or("SDFT not initialized")?.spectrum().to_vec();
 
         // Scale-space peak picking for initial center frequencies
         let power_spectrum: Vec<f64> = signal_spectrum.iter().map(|c| c.norm_sqr()).collect();
@@ -82,34 +83,35 @@ impl RsvmdProcessor {
         // Convert modes to time domain
         let modes = self.modes_to_time_domain(&result.mode_spectra);
 
-        RsvmdOutput {
+        Ok(RsvmdOutput {
             modes,
             center_freqs: result.center_freqs,
             iterations: result.iterations,
             converged: result.converged,
-        }
+        })
     }
 
     /// Warm update: accepts exactly step_size samples.
     /// Uses sliding DFT, warm-starts ADMM from previous state.
-    pub fn update(&mut self, new_samples: &[f64]) -> RsvmdOutput {
+    pub fn update(&mut self, new_samples: &[f64]) -> Result<RsvmdOutput, String> {
         if !self.state.initialized {
             // If not initialized and we receive window_len samples, do cold start
             if new_samples.len() == self.config.window_len {
                 return self.initialize(new_samples);
             }
-            panic!(
+            return Err(format!(
                 "Processor not initialized. First call must provide {} samples.",
                 self.config.window_len
-            );
+            ));
         }
 
         let s = new_samples.len();
-        assert_eq!(
-            s, self.config.step_size,
-            "Expected {} samples, got {}",
-            self.config.step_size, s
-        );
+        if s != self.config.step_size {
+            return Err(format!(
+                "Expected {} samples, got {}",
+                self.config.step_size, s
+            ));
+        }
 
         // Get old samples that are leaving the window
         let old_samples: Vec<f64> = self.window_buffer.iter().take(s).copied().collect();
@@ -123,13 +125,13 @@ impl RsvmdProcessor {
         }
 
         // Sliding DFT update
-        let sdft = self.sdft.as_mut().unwrap();
-        sdft.slide_block(new_samples, &old_samples);
+        let sdft = self.sdft.as_mut().ok_or("SDFT not initialized")?;
+        sdft.slide_block(new_samples, &old_samples)?;
 
         // Check if FFT reset is needed
         if sdft.needs_reset() {
             let buf: Vec<f64> = self.window_buffer.iter().copied().collect();
-            sdft.reset_from_buffer(&buf);
+            let _ = sdft.reset_from_buffer(&buf);
         }
 
         let signal_spectrum: Vec<Complex64> = sdft.spectrum().to_vec();
@@ -140,12 +142,12 @@ impl RsvmdProcessor {
         // Convert to time domain
         let modes = self.modes_to_time_domain(&result.mode_spectra);
 
-        RsvmdOutput {
+        Ok(RsvmdOutput {
             modes,
             center_freqs: result.center_freqs,
             iterations: result.iterations,
             converged: result.converged,
-        }
+        })
     }
 
     /// Get current center frequencies.
@@ -162,7 +164,7 @@ impl RsvmdProcessor {
     pub fn reset_fft(&mut self) {
         if let Some(ref mut sdft) = self.sdft {
             let buf: Vec<f64> = self.window_buffer.iter().copied().collect();
-            sdft.reset_from_buffer(&buf);
+            let _ = sdft.reset_from_buffer(&buf);
         }
     }
 
@@ -249,7 +251,7 @@ mod tests {
         };
 
         let mut proc = RsvmdProcessor::new(config);
-        let output = proc.initialize(&signal);
+        let output = proc.initialize(&signal).unwrap();
 
         assert_eq!(output.modes.len(), 3);
         assert_eq!(output.modes[0].len(), n);
@@ -277,12 +279,12 @@ mod tests {
         let mut proc = RsvmdProcessor::new(config);
 
         // Cold start
-        let cold = proc.initialize(&signal[..n]);
+        let cold = proc.initialize(&signal[..n]).unwrap();
         let cold_iters = cold.iterations;
 
         // Warm updates — verify they produce valid output
         for i in 0..10 {
-            let output = proc.update(&signal[n + i..n + i + 1]);
+            let output = proc.update(&signal[n + i..n + i + 1]).unwrap();
             assert_eq!(output.modes.len(), 3);
             assert_eq!(output.modes[0].len(), n);
             assert_eq!(output.center_freqs.len(), 3);
@@ -313,7 +315,7 @@ mod tests {
         let mut proc = RsvmdProcessor::new(config);
 
         // Pass window_len samples to update — should auto-initialize
-        let output = proc.update(&signal);
+        let output = proc.update(&signal).unwrap();
         assert!(proc.initialized());
         assert_eq!(output.modes.len(), 3);
     }

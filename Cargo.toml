@@ -7,10 +7,14 @@ description = "Recursive Sliding Variational Mode Decomposition with Python bind
 
 [lib]
 name = "rsvmd"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-pyo3 = { version = "0.23", features = ["extension-module"] }
+pyo3 = { version = "0.23" }
 numpy = "0.23"
 num-complex = "0.4"
 rustfft = "6.2"
