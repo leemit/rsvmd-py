@@ -1,0 +1,1168 @@
+Article
+
+The Parameter-Optimized Recursive Sliding Variational Mode
+Decomposition Algorithm and Its Application in Sensor
+Signal Processing
+Yunyi Liu 1,2 , Wenjun He 2 , Tao Pan 2 , Shuxian Qin 2 , Zhaokai Ruan 2 and Xiangcheng Li 1,2, *
+1
+
+2
+
+*
+
+Academic Editor: Baijie Qiao
+Received: 14 January 2025
+Revised: 27 February 2025
+Accepted: 17 March 2025
+Published: 20 March 2025
+Citation: Liu, Y.; He, W.; Pan, T.; Qin,
+S.; Ruan, Z.; Li, X. The ParameterOptimized Recursive Sliding
+Variational Mode Decomposition
+Algorithm and Its Application in
+
+The Guangxi Key Laboratory of Multimedia Communications and Network Technology, Guangxi University,
+Nanning 530004, China; liuyunyi@gxu.edu.cn
+School of Computer and Electronic Information, Guangxi University, Nanning 530004, China;
+2213391002@st.gxu.edu.cn (W.H.); 2313392017@st.gxu.edu.cn (T.P.); 2113391109@st.gxu.edu.cn (S.Q.);
+ruanzhaokai@st.gxu.edu.cn (Z.R.)
+Correspondence: xcli@gxu.edu.cn
+
+Abstract: In industrial polishing, the sensor on the polishing motor needs to extract accurate signals in real time. Due to the insufficient real-time performance of Variational Mode
+Decomposition (VMD) for signal extraction, some studies have proposed the Recursive
+Sliding Variational Mode Decomposition (RSVMD) algorithm to address this limitation.
+However, RSVMD can exhibit unstable performance in strong-interference scenarios. To
+suppress this phenomenon, a Parameter-Optimized Recursive Sliding Variational Mode
+Decomposition (PO-RSVMD) algorithm is proposed. The PO-RSVMD algorithm optimizes
+RSVMD in the following two ways: First, an iterative termination condition based on
+modal component error mutation judgment is introduced to prevent over-decomposition.
+Second, a rate learning factor is introduced to automatically adjust the initial center frequency of the current window to reduce errors. Through simulation experiments with
+signals with different signal-to-noise ratios (SNR), it is found that as the SNR increases
+from 0 dB to 17 dB, the PO-RSVMD algorithm accelerates the iteration time by at least 53%
+compared to VMD and RSVMD; the number of iterations decreases by at least 57%; and
+the RMSE is reduced by 35% compared to the other two algorithms. Furthermore, when
+applying the PO-RSVMD algorithm and the RSVMD algorithm to the Inertial Measurement
+Unit (IMU) for measuring signal extraction performance under strong interference conditions after the polishing motor starts, the average iteration time and number of iterations
+of PO-RSVMD are significantly lower than those of RSVMD, demonstrating its capability
+for rapid signal extraction. Moreover, the average RMSE values of the two algorithms
+are very close, verifying the high real-time performance and stability of PO-RSVMD in
+practical applications.
+Keywords: variational mode decomposition; recursive sliding; parameter optimization;
+IMU signal; denoising
+
+Sensor Signal Processing. Sensors 2025,
+25, 1944. https://doi.org/10.3390/
+s25061944
+Copyright: © 2025 by the authors.
+Licensee MDPI, Basel, Switzerland.
+This article is an open access article
+distributed under the terms and
+conditions of the Creative Commons
+Attribution (CC BY) license
+(https://creativecommons.org/
+licenses/by/4.0/).
+
+Sensors 2025, 25, 1944
+
+1. Introduction
+Currently, wavelet transform and modal decomposition are the mainstream signal
+denoising techniques. Wavelet transform is a signal processing technique based on wavelet
+analysis. It performs multi-scale refinement analysis of the signal through scaling and
+shifting operations, effectively handling the signal. Zhang et al. [1] proposed an improved
+wavelet denoising algorithm, which uses the concept of adaptive weighted averaging
+to determine the boundary between noise and signal components, and reconstructs the
+
+https://doi.org/10.3390/s25061944
+
+Sensors 2025, 25, 1944
+
+2 of 20
+
+filtered signal accordingly. However, the choice of wavelet basis heavily relies on human
+experience, and improper selection can affect the decomposition performance of the signal.
+Empirical Mode Decomposition (EMD) is one of the mainstream modal decomposition
+algorithms. When applying EMD to remove signal noise, the signal is decomposed into
+several intrinsic mode functions (IMF), and the selection criteria for noise IMF are crucial.
+Many researchers have studied various correlation-based methods as noise determination
+criteria. For example, in reference [2], the Bhattacharyya distance and the variance of the
+autocorrelation function are used in a two-step process to filter out noise components. Shi
+et al. [3] distinguish noise components from signal components based on the correlation
+coefficient between each component and the original signal. Reference [4] uses the Hellinger
+distance to filter out noise components, then extracts valid signal components using the
+autocorrelation function, and finally reconstructs compensation errors by combining the
+signal components with the residual. Wang et al. [5] remove high-frequency components,
+then use the TFPF algorithm to extract useful signals from the intermediate-frequency
+components, and finally merge the extracted signal with the low-frequency components
+to reconstruct the original signal. These algorithms achieve signal denoising but carry
+the risk of losing useful signals, leading to bias in the reconstructed signal. Meanwhile,
+traditional EMD cannot decompose a signal if there are insufficient extreme points, which
+can result in spectral overlap. To solve this issue, some studies have attempted to improve
+the EMD algorithm. For example, an enhanced method effectively separates measurement
+noise in drift signals using a combined EMD approach [6]. This improvement significantly
+mitigates the mode mixing problem of EMD but does not fundamentally eliminate the
+white noise introduced during the decomposition process.
+Variational Mode Decomposition (VMD) [7], as an advanced signal processing technique, is particularly suitable for the analysis and processing of nonlinear and nonstationary signals. When using the VMD algorithm for denoising, the decomposition
+parameters and noise separation criteria need to be pre-set. The precise separation of signal
+and noise can only be effectively achieved when the decomposition level, penalty factor,
+and other parameters are matched with the time-frequency characteristics of the signal
+to be processed. To find the optimal decomposition level and penalty factor for a signal,
+Wang et al. [8] used a differential evolution algorithm to search for the optimal combination of decomposition level and penalty factor in VMD. Other studies have introduced
+population-based heuristic optimization algorithms into the VMD parameter pre-setting
+stage, such as the Beetle Antennae Search Algorithm [9], but these methods have higher
+computational complexity and certain randomness. To suppress truncation and endpoint
+effects during signal decomposition, reference [10] used a relatively simple and direct
+mathematical statistical method. It employed a triangular waveform matching approach to
+search the entire signal and find the waveform most compatible with the endpoints, and
+then used a grid search method based on mutual information entropy criteria to select the
+optimal VMD parameters for the extended signal.
+VMD has demonstrated superior decomposition performance in modal decomposition,
+making it widely applicable in various fields. In the sensor domain, Inertial Measurement
+Units (IMUs) are commonly used in applications such as autonomous driving [11], navigation [12], robotics [13], and industrial polishing [14]. IMUs are capable of capturing and
+transmitting key kinematic information such as acceleration and angular velocity in real
+time, which is crucial for achieving precise control. However, in practical applications,
+IMU signals are often inevitably affected by noise, vibrations, and other interference factors.
+These disturbances not only reduce the accuracy of the signals but also directly impact
+subsequent data processing and analysis. In industrial polishing operations, it is necessary
+to ensure the precision of both the polishing process and the real-time performance, which
+
+Sensors 2025, 25, 1944
+
+3 of 20
+
+calls for improved IMU signal denoising capabilities. We applied VMD to denoise IMU
+signals under industrial polishing conditions. However, the iterative optimization mechanism of VMD limits its decomposition efficiency to some extent, making it less effective in
+handling large-scale signals or signals with high real-time requirements.
+In reference [15], the authors proposed a novel method, the Recursive Sliding Variational Mode Decomposition (RSVMD) algorithm. This method replaces the original Fourier
+transform of the model with sliding discrete Fourier transform. To enhance decomposition
+efficiency while ensuring accuracy, the method incorporates prior knowledge from previous decompositions to set the initial decomposition parameters for the current window
+and imposes stricter constraints on the iterative process. RSVMD significantly improves
+decomposition efficiency while maintaining accuracy, making it more suitable for applications with high real-time requirements. However, through simulation experiments, we
+found that when processing signals with strong interference components, RSVMD exhibits
+unstable performance, which manifests as two main phenomena: First, there is a dramatic
+increase in iteration time and iteration count; second, the center frequency is incorrectly
+initialized after the window data are updated. These two phenomena lead to a decrease in
+signal decomposition efficiency and insufficient output accuracy.
+While the general signal decomposition capability of VMD-based methods is well established, the primary focus of this work is to address the real-time performance limitations
+of RSVMD. Specifically, we aim to improve the computational efficiency of RSVMD in realworld applications, such as IMU signal processing in industrial polishing, where real-time
+performance is critical. Although the decomposition accuracy of RSVMD is satisfactory,
+its computational load and iteration time are often prohibitive in scenarios requiring high
+real-time performance. Therefore, the RSVMD algorithm needs to undergo parameter
+optimization, i.e., PO-RSVMD. To address the two unstable performance phenomena, an
+iterative termination condition based on modal component error mutation judgment is
+introduced to avoid over-decomposition, which can lead to a significant increase in computational load and a sharp decline in performance. At the same time, considering that
+performance degradation may lead to errors in the center frequency band, a rate learning
+factor is introduced to reduce the center frequency error. The algorithm combines the
+current center frequency with the previous window’s center frequency to obtain the new
+center frequency. Since the trend of iteration speed and algorithm performance is consistent,
+the rate learning factor is automatically adjusted based on the change in iteration time
+to maintain the initial center frequency. Then, through signal decomposition simulation
+experiments, the performance of the VMD, RSVMD, and PO-RSVMD algorithms is compared. Additionally, we attempt to apply the PO-RSVMD algorithm to the denoising of
+IMU angular velocity signals during polishing, with the expectation that PO-RSVMD can
+quickly and accurately complete the decomposition of angular velocity signals and the
+removal of interference components.
+
+2. Algorithm Principles
+2.1. Algorithm Fundamentals
+Variational Mode Decomposition (VMD) is a completely non-recursive method of
+signal decomposition that works by decomposing a signal into a series of intrinsic mode
+functions (IMFs) with specific center frequencies and finite bandwidths. Given an input
+signal f (t), the expression of the k-th IMFs obtained by VMD decomposition is shown in
+Formula (1).
+vk (t) = Ak (t) cos( φk (t))
+(1)
+
+Sensors 2025, 25, 1944
+
+4 of 20
+
+where Ak (t) represents the instantaneous amplitude of the corresponding mode component,
+and φk (t) is the instantaneous phase. The instantaneous center frequency can be obtained
+by differentiating the instantaneous phase.
+The core idea of VMD algorithm is to reconstruct the constrained variational model
+and obtain the optimal solution. The resulting construction of the constrained variational
+mode is shown in Formulas (2) and (3).
+K
+
+min
+
+{ v k },{ ω k }
+
+∑ ∂t
+
+
+
+k =1
+
+j
+δ(t) +
+πt
+
+
+
+
+
+∗ vk (t) e
+
+2
+
+− jωk t
+
+!
+(2)
+
+2
+
+s.t.∑kK=1 vk (t) = f (t)
+
+(3)
+
+where vk is the set of all modes, ωk is the set of center frequencies, and s.t. denotes
+the constraint.
+In order to render the constrained variational model no longer constrained, the
+quadratic penalty term α and the Lagrange multiplier λ are utilized to address the reconstruction. Thus the obtained augmented Lagrange expression is shown in Formula (4).
+h
+
+
+i
+j
+δ(t) + πt ∗ vk (t) e− jωk t ||22
+E
+D
+2
++ f (t) − ∑kK=1 vk (t) + λ(t), f (t) − ∑kK=1 vk (t)
+
+L({vk }, {ωk }, λ) = α ∑kK=1 ∥∂t
+
+(4)
+
+2
+
+We use the Alternate Direction Method of Multipliers (ADMM) [16,17] to obtain
+the optimal solution of the variational mode iteratively, and the expression of the modal
+components vnk +1 is shown in Formula (5).
+
+
+K
+
+vnk +1 = agr min α ∑ ∂t
+vk ∈ X
+
+k =1
+
+
+δ(t) +
+
+j
+πt
+
+
+
+
+
+∗ vk (t) e
+
+− jωkn+1 t
+
+2
+2
+
++ f (t) − ∑ vin+1 (t) +
+i ̸=k
+
+λ(t)
+2
+
+2
+
+
+
+
+(5)
+
+2
+
+where n is the number of iterations.
+The principle of Sliding Discrete Fourier Transform (SDFT) [18,19] is to use the sliding
+window to dynamically add new data and remove old data, and perform Discrete Fourier
+Transform (DFT) to eliminate the redundant calculation. The expression of the singlesample sliding discrete Fourier transform is shown in Formula (6).
+2πk
+
+X1 (k) = [ X0 (k) − x (0) + x ( N )]e j N
+
+(6)
+
+When the single sample point is generalized to multiple sample points, that is, when
+the step size is s, the corresponding expression of sliding window SDFT with multiple
+sample points is shown in Formula (7).
+2πks
+
+L −1
+
+Xs (k) = X0 (k )e j N + ∑ [ x ( p + N ) − x ( p)]WN
+
+k ( p +1)
+
+(7)
+
+p =0
+
+where Xs (k) is the spectrum of in the current window, x ( p + N ) is the new sampled data
+added to the current window, and x ( p) is the old sampled data to be removed from the
+k ( p +1)
+
+current window; the complex exponential WN
+is a rotational factor influenced by the
+shifting parameter k.
+We use SDFT to convert Formula (5) into the frequency domain, and the optimized
+mode components are shown in Formula (8).
+⌢
+⌢ n +1
+vi
+(ω ) + ( λ (ω )/2)
+1 + 2α(ω − ωk )2
+
+SDFT (ω ) − ∑i̸=k
+vnk +1 (ω ) =
+
+(8)
+
+Sensors 2025, 25, 1944
+
+5 of 20
+
+where SDFT (ω ) is the spectrum data obtained by SDFT calculation.
+Similarly, the updated center frequency after iteration ωkn+1 is shown in Formula (9).
+⌢
+
+ωkn+1 ≈
+
+∑ ω v k (ω )
+⌢
+
+∑ v k (ω )
+
+2
+
+2
+
+(9)
+
+2.2. Parameter-Optimized RSVMD Algorithm
+The PO-RSVMD algorithm is designed to address the real-time performance limitations of RSVMD, particularly in scenarios with strong interference. While RSVMD
+demonstrates satisfactory decomposition accuracy, its computational load and iteration
+time can be prohibitive in real-time applications. The primary contribution of PO-RSVMD
+lies in its ability to reduce computational complexity while maintaining comparable decomposition accuracy, rather than extending its applicability to a broader range of signal
+types. Although the algorithm’s performance in handling arbitrary amplitude or frequency
+modulation signals is an important direction for future research, the current study focuses
+on optimizing RSVMD for real-time applications. The optimization strategy of RSVMD
+will be described in detail below.
+2.2.1. Supplementary Constraints for Convergence Conditions
+The two iteration termination conditions of VMD mode are the maximum number of
+iterations and the minimum convergence error, and the updating process for iteration is
+terminated when one of the conditions above is met. In order to avoid over-decomposition
+in the iterative update process, the relative error judgment is added into the original error
+judgment condition. When the error is greater than the preset accuracy, the iteration
+is terminated.
+2
+vnk +1 (ω ) − vnk (ω )
+2
+< εr
+(10)
+∑
+2
+n
+vk (ω ) 2
+k
+2
+
+∑ vnk +1 (ω ) − vnk (ω ) 2 < ε a
+
+(11)
+
+k
+
+where ε r represents the relative error, and ε a represents the absolute error.
+Although the algorithm obtains a relatively ideal result in the iteration process, it is
+possible that the iteration process will continue until the maximum number of iterations
+is reached, resulting in a certain error between the final result and the theoretical value.
+Therefore, the iterative convergence condition requires further supplementary constraints
+to prevent the RSVMD mode from falling into over-decomposition. Over-decomposition
+is a situation where an excessive operation volume is generated due to deterioration
+in the performance of the algorithm, which makes the signal decomposition accuracy
+become lower. According to the literature on the original VMD algorithm, VMD uses the
+ADMM solution. Due to the convergence of ADMM, the original residual r n will gradually
+approach 0. The VMD solution is based on constraints such as Formula (3) above. The
+original residual is represented by Formula (12).
+K
+
+r n = f (t) − ∑ vnk (t)
+
+(12)
+
+k =1
+
+According to the ADMM update rules, the number of updates to Lagrangian multipliers is shown in Formula (13).
+
+Sensors 2025, 25, 1944
+
+6 of 20
+
+K
+
+λn+1 = λn + α f (t) − ∑ vnk +1 (t)
+
+!
+(13)
+
+k =1
+
+When performing the iterative solution, the dual residual of ADMM is represented
+by Formula (14).
+!
+K
+
+sn = λn+1 − λn = α f (t) − ∑ vnk +1 (t)
+
+(14)
+
+k =1
+
+According to the constraints, the dual residual can be expressed by Formula (15).
+
+K 
+sn = α ∑ vnk +1 (t) − vnk (t)
+
+(15)
+
+k =1
+
+According to the convergence of ADMM, the original residual r n will gradually
+approach 0, so the dual residual sn will gradually approach 0. For the relative error ε r and
+absolute error ε a in the iterative exit condition, since the objective function is monotonically
+decreasing and has a lower bound, its residuals also converge to 0. This is proven as follows.
+In each iteration, updating of the modal function vk (t) and the center frequency
+ωk is achieved by minimizing the objective function. Because the objective function is
+monotonically decreasing, the change in the modal function and the center frequency in
+each iteration will gradually decrease; otherwise, the value of the objective function cannot
+continue to decrease. Specifically, if the change in the modal function vk (t) is large, the
+objective function will be significantly reduced. As the iteration progresses, the modal
+function and the center frequency gradually approach the optimal value, the amount
+of change will decrease, and the decrease in the objective function value will gradually
+decrease. When the number of iterations n → ∞, the objective function converges to the
+local minimum value, and the change in the modal function vk (t) and the center frequency
+ωk is close to 0 vnk +1 (t) − vnk (t)
+
+→ 0, ωkn+1 − ωkn → 0. Therefore, during the iteration
+process, especially when the iteration error converges to a smaller value, the larger error
+can clearly indicate that the system iteration is in an abnormal situation and the iteration
+should stop. Therefore, based on the monotonic judgment of the above error changes, the
+supplementary constraints are shown in Formulas (16) and (17).
+2
+
+kr =
+
+εnr − εnr −1
+= εnr − εnr −1 < 0
+n − ( n − 1)
+
+(16)
+
+ka =
+
+εna − εna −1
+= εna − εna −1 < 0
+n − ( n − 1)
+
+(17)
+
+where n is the number of current iterations, kr is the slope of the relative error, εnr and
+εnr −1 are the relative errors of two adjacent iterations, k a is the slope of the absolute error,
+and εna and εna −1 are the absolute errors of two adjacent iterations. When the above supplementary constraint conditions are not satisfied, the iterative optimization process is
+terminated immediately.
+2.2.2. Optimization of Center Frequency and Modal Components
+In order to make the algorithm converge quickly, using the rate factor a to fuse the
+initial parameters and result parameters in the previous window proportionally. This
+can ensure the reasonable utilization of the data in the current window and improve the
+
+Sensors 2025, 25, 1944
+
+7 of 20
+
+decomposition efficiency. From this, the current initial center frequency is constructed as
+shown in Formula (18).
+n o
+n o
+ωk0
+= (1 − a) ωk0
++ a{ωke }last
+(18)
+current
+
+last
+
+
+where ωk0 current is the initial center frequency of the current window, ωk0 last is the
+ e
+initial center frequency of the previous sliding window, and ωk last is the final center
+frequency. The value range of the rate factor a is 0 to 1.
+Similarly, by introducing the rate factor a into the modal component, the initial value
+expression of the mode component after optimization is obtained, as shown in Formula (19).
+
+
+n o
+v0k
+
+current
+
+n o
+= (1 − a) v0k
+
+last
+
++ a{vek }last
+
+(19)
+
+
+
+where v0k current is the initial modal component of the current window, v0k last is the
+ e
+initial modal component of the previous sliding window, and vk last is the final modal
+component, and the value range of rate factor a is also 0 to 1.
+When facing complex non-steady-state signals, the unified set learning rate cannot easily deal with various upheaval situations, so relatively stable and reliable initial parameters
+cannot be obtained. The above findings show that when a large range of fluctuations occurs
+in the iteration time, the decomposition effect, such as the difference between the starting
+center frequency and the theoretical value at the next moment, or the similarity between
+the original component and the extracted modal component, will also change drastically,
+and these multiply. The change pattern of indicators is almost consistent, indicating that
+there is a real-time response relationship between iteration time and decomposition effect.
+Therefore, this article attempts to automatically control parameter initialization based on
+the fluctuations in iteration time.
+The relationship between the change in time amplitude and the initial center frequency
+was assessed, and it was found that with a sharp increase in the iteration time, the gap between
+the subsequent adjacent initial center frequency and the theoretical value also increased, indicating that the center frequency of the previous window is less suitable for the current window
+data. In addition, the inadequacy generated increases the difficulty of the decomposition of
+VMD, and it takes a long time to obtain the optimal solution. At this time, if the rate factor
+is reduced based on the previous section algorithm, that is, when the parameters of the next
+window are initialized, the proportion of the center frequency of the error result is reduced,
+and the proportion of the initial center frequency closer to the ideal value is increased accordingly, ensuring current window rationalization of the initial parameters to avoid subsequent
+inefficiency of decomposition caused by improper initial values.
+To summarize, this section proposes establishing a mapping relationship between
+the time fluctuation amplitude and rate factor, controlling the proportion of existing data
+participating in initialization, and conducting adaptive learning and updating of the center
+frequency and modal components. Through multiple experiments, we explored the relationship between the magnitude of time change, initial parameters, and rate factors, and
+found that there is an interval correspondence between the first two, so we constructed the
+correspondence relationship as in Formula (20).
+
+
+0, ∆t ≥ 0.8
+
+
+
+
+0.001, 0.6 ≤ ∆t < 0.8
+
+
+
+ 0.01, 0.4 ≤ ∆t < 0.6
+a=
+(20)
+
+0.05, 0.2 ≤ ∆t < 0.4
+
+
+
+
+0.2, 0.1 ≤ ∆t < 0.2
+
+
+
+ 0.5, others
+
+Sensors 2025, 25, 1944
+
+8 of 20
+
+In the formula, ∆t is the error value of the first two iteration times, and a is the rate
+factor. When the time error does not belong to the defined abnormal fluctuation range, the
+default value is 0.5. The algorithm first estimates the time change in real time, converts the
+front and back changes in the running time to the weight coefficient, and then substitutes
+Equations (14) and (15) to set the initial center frequency and modal components of VMD.
+2.2.3. Algorithm Implementation Workflow
+The algorithm constructs a real-time VMD model guided by a sliding window. Firstly,
+it utilizes SDFT to compute the spectrum, thereby reducing the time required for frequency
+domain transformation. Secondly, during parameter initialization, the results from previous
+stages are used as the initial parameters for the current stage to reduce computational costs.
+Finally, a minimum absolute error criterion is added to further constrain the convergence
+rule, preventing potential over-decomposition phenomena during iterations.
+PO-RSVMD, derived from VMD, still requires reasonable presetting of input parameters in the initial stage to ensure the accuracy of the decomposition results. Before
+processing the signal, the window length is selected based on the sampling characteristics
+of the equipment and the frequency resolution, and the sliding step size is set according
+to actual requirements, thereby completing the sliding window design of the algorithm.
+Additionally, appropriate values for the number of decomposition layers K, the penalty
+coefficient α, the maximum number of iterations Nmax , the relative error ε r , and the absolute
+error ε a are set. It is particularly noted that for the first window of data, the initial modes
+are set to 0, and Fourier transform is performed to obtain the spectrum Fcurrent . The first
+K peak frequencies in the spectrum are used as the initial center frequencies. After VMD
+processing, the specified mode components {uk }current and center frequencies {ωk }current
+are obtained and used as initial parameters for subsequent data, enabling recursive sliding
+Variational Mode Decomposition.
+The flowchart of PO-RSVMD is shown in Figure 1, and the specific implementation
+steps are as follows.
+(1)
+(2)
+
+(3)
+
+(4)
+
+(5)
+
+Read the current time data input value based on the pre-designed sliding window.
+Initialize the parameters by setting the Lagrange multiplier λ̂ and the number of
+iterations n to 0. Use the decomposition results from the previous window signal to
+initialize the input parameters for the current window. Assign the center frequency
+{ωk }current and intrinsic modal component {uk }current from the previous window’s
+output to the initial center frequency {ωk }init and initial modal component {uk }init of
+the current window.
+Perform sliding discrete Fourier transform, and calculate the spectrum information of
+the current window using the spectrum of the previous frame data and the new and
+old data before and after the update, that is, Formula (7).
+Iterate to calculate the optimal solution; enter the internal iterative operation of VMD;
+solve the optimal variational decomposition of the current time data using the ADMM
+method; substitute the updated frequency spectrum, modal components, and central
+frequency under the corresponding iteration times into Formulas (8) and (9) to update
+the modal components and central frequency; and calculate the relative error and
+absolute error of this iteration according to Formulas (10) and (11).
+Set n = n + 1. If n is less than the maximum number of iterations Nmax at this time, or
+both the absolute and relative errors are less than the preset accuracy, then the iteration
+will be stopped; otherwise, repeat step (4) until the iteration stop conditions are met.
+Please refer to Formulas (12) and (13) for the iteration stop conditions. Perform inverse
+Fourier transform and output the result of this window.
+
+Sensors 2025, 25, 1944
+
+9 of 20
+
+(6)
+
+Slide the window with the specified step size to update the time series, and repeat
+steps (1) to (5) to perform Variational Mode Decomposition on the signal until all data
+have been processed.
+
+Figure 1. PO-RSVMD algorithm flow chart.
+
+3. Experimental Analysis and Results
+The simulation experiments conducted in this study were designed to evaluate the
+real-time performance of PO-RSVMD in comparison to VMD and RSVMD, particularly
+in scenarios with strong interference. While additional simulation cases could further
+demonstrate the general signal decomposition capabilities of VMD-based methods, they
+are not directly relevant to the core objective of this study, which is to improve the computational efficiency of RSVMD for real-time applications. We implemented the PO-RSVMD
+algorithm using MATLAB 2021b and conducted a series of simulation experiments to
+evaluate its performance in comparison to VMD and RSVMD. The experiments focused
+on signal decomposition under varying levels of noise and interference, with a particular
+emphasis on real-time performance and accuracy.
+3.1. Evaluation Metrics
+The root-mean-square error (RMSE) was used to evaluate the performance metrics of
+the algorithm. The RMSE formula is given by Formula (21).
+v
+u
+u1 N
+⌢
+RMSE = t ∑ | x (n)− x (n)|2
+N n =1
+⌢
+
+(21)
+
+where x (n) is the true component of the signal, x (n) is the component obtained after signal
+decomposition, and N is the length of the signal. The closer the decomposed signal is to the
+true component, the smaller the RMSE value, indicating better decomposition performance.
+
+Sensors 2025, 25, 1944
+
+10 of 20
+
+3.2. Analysis of Unstable Performance Phenomenon of RSVMD and Optimization Results
+The simulation signal used in our study was sourced from reference [20], which is
+widely applied in various EMD and VMD simulation experiments, and in simulation
+experiments using their respective improved algorithms, and holds significant application
+and reference value, as shown in Equation (22).
+
+x = x1 + x2 + x3 + η
+
+
+
+ x = cos(2π × 2t)
+1
+
+x2 = 14 cos(2π × 24t)
+
+
+
+1
+cos(2π × 288t)
+x3 = 16
+
+(22)
+
+where x is the original signal, x1 , x2 , and x3 are cosine signals with frequencies of 2 Hz,
+24 Hz, and 288 Hz, respectively, and η is Gaussian white noise.
+The sampling frequency of the constructed simulation signal is set to 1000 Hz, i.e.,
+f s = 1000 Hz, with a sampling duration of 10 s (T = 10 s) and an SNR of 20 dB. We plotted
+only the first cycle of the simulation signal, as well as the time-domain waveforms of its
+components, as shown in Figure 2. This simulation signal is composed of three harmonic
+signals with specific frequencies, so the number of decomposition modes for RSVMD
+was set to 3. The initial center frequencies were set to the frequencies of the sub-signals,
+the initial mode of the first window was set to 0, the penalty factor was set to 2000, the
+maximum number of iterations was 500, the relative error was set to 5 × 10−3 , and the
+iteration error was set to 5 × 10−6 .
+
+(a)
+
+(b)
+
+Figure 2. Time-domain plot of original signal and its sub-signals. (a) Simulation signal. (b) Sub-signal.
+
+Using [16, 1000] as the sliding step size and window length, RSVMD decomposition
+experiments were conducted on the noisy simulation signal described in Equation (22).
+After multiple experiments, it was found that in some cases, the decomposition results
+exhibited unstable behavior. The original signals that caused the unstable behavior were
+highly similar in waveform to the original signals that exhibited stable behavior, as shown in
+Figure 3. The difference between unstable and stable behavior phenomena in this article is
+that for the same signal, after adding random noise with the same signal-to-noise ratio, the
+overall trends and amplitudes of the resulting two signals are very similar. However, when
+decomposing these two highly similar signals using RSVMD with the same parameters,
+the decomposition results show significant differences. These differences are reflected
+in aspects such as the number of iterations, iteration time, center frequencies, and the
+discrepancies between the decomposed modes and the true signal.
+
+Sensors 2025, 25, 1944
+
+11 of 20
+
+Figure 3. The original signals in the two phenomena.
+
+However, under the RSVMD unstable behavior phenomenon, the error between the
+decomposed component IMF1 and the true component increases significantly at certain
+stages. We used RMSE to compare the difference in signal components between the stable
+and unstable behavior phenomena, as shown in Figure 4.
+
+Figure 4. The RMSE of the sub-signals in the two phenomena.
+
+3.2.1. Issue of Over-Decomposition
+The over-decomposition phenomenon is characterized by a significant increase in the
+number of iterations and iteration time, as shown in Figure 5.
+After further adding constraints to the iteration convergence conditions for algorithm
+optimization, a segment of data exhibiting the unstable behavior phenomenon was used to
+test the effectiveness of the algorithm, as shown in Figure 6.
+From Figure 6a, it can be observed that the optimized RSVMD algorithm terminates
+after 217 iterations. Both algorithms use the default iteration count of 500 and the default
+preset error parameters. From the figure, it can be observed that RSVMD exhibits overdecomposition, after which the absolute error begins to increase, and the iteration cannot
+be stopped. This indicates that PO-RSVMD effectively addresses the over-decomposition
+issue in RSVMD. To better evaluate the performance of the algorithm, we represent the
+modal components with IMF1, IMF2, and IMF3, corresponding to center frequencies of
+288 Hz, 24 Hz, and 2 Hz, respectively, based on frequency order. The RMSE values for the
+two algorithms were calculated through the aforementioned optimization experiments to
+assess their effectiveness, as shown in Table 1. From Table 1, it can be concluded that the
+RMSE of each modal component in the PO-RSVMD algorithm is lower than that of the
+RSVMD algorithm, indicating that the algorithm’s performance has been improved.
+
+Sensors 2025, 25, 1944
+
+12 of 20
+
+(a)
+
+(b)
+
+Figure 5. The algorithm decomposition efficiency results for the two phenomena. (a) The iteration
+time in the two phenomena. (b) The number of iterations in the two phenomena.
+
+(a)
+
+(b)
+
+Figure 6. Error variation in iterative process of RSVMD and PO-RSVMD. (a) Variation in absolute
+error. (b) Variation in relative error.
+Table 1. RMSE of sub-signals for the two algorithms.
+
+Algorithm
+
+IMF1
+
+IMF2
+
+IMF3
+
+RSVMD
+PO-RSVMD
+
+0.867
+0.0391
+
+0.0387
+0.0362
+
+0.0281
+0.0273
+
+3.2.2. Issue of Increased Central Frequency Error
+After the performance degradation of RSVMD, an increase in the center frequency
+error of each component occurs, as shown in Figure 7.
+Through our research, it was found that introducing a rate learning factor can effectively reduce the error caused by the incorrect initialization of the center frequency.
+Introducing a fixed rate learning factor reduces the error to some extent, but when the
+center frequency error fluctuates significantly, the error remains unacceptable. Therefore,
+by automatically adjusting the rate learning factor based on the changes in iteration time,
+we can significantly suppress the increase in center frequency error. The experimental
+results are shown in Figure 8.
+
+Sensors 2025, 25, 1944
+
+13 of 20
+
+Figure 7. The difference between the initial center frequency and theoretical value in the two
+phenomena.
+
+Figure 8. The difference between the center frequency and theoretical value in the different algorithms.
+
+From Figure 8, it is evident that there is a significant discrepancy between the initial
+center frequency and the theoretical value in RSVMD and RSVMD with fixed rate factor initialization parameters. IMF1 exhibits several drastic fluctuations ranging from 17% to 52%,
+and these fluctuations persist for a relatively long duration, while the fluctuation ranges for
+IMF2 and IMF3 are about 5% to 10%. Although RSVMD with fixed rate factor initialization
+parameters mitigates the impact of errors to some extent, its effectiveness is limited. In
+contrast, the difference in our improved algorithm shows almost no significant fluctuations
+throughout the process, and at mutation points, it successfully maintains the initial center
+frequency near the actual value. This improvement is attributed to PO-RSVMD, which
+automatically adjusts the initial parameters of the previous window based on the detected
+changes in iteration time. This reduces the impact on the current window, effectively halts
+the center frequency error fluctuations, and substantially decreases the error, ensuring the
+accuracy of subsequent iterative operations.
+3.3. PO-RSVMD Algorithm Performance
+To make the experimental data more rigorous, we set the SNR in the range of [0, 40]
+with a 3 dB interval, in order to verify the real-time denoising capability of the RSVMD
+optimization algorithm. The experimental results are shown in Figure 9.
+
+Sensors 2025, 25, 1944
+
+14 of 20
+
+(a)
+
+(b)
+
+Figure 9. Average iteration time and average iteration count of each algorithm at different SNRs.
+(a) Average iteration time. (b) Average iteration count.
+
+It is clearly seen from Figure 9a,b that the PO-RSVMD algorithm is highly efficient
+in terms of signal decomposition. In the [0, 17] dB SNR range, the average iteration time
+and iteration count for the VMD and RSVMD algorithms tend to stabilize at a fixed value,
+while the average iteration time and iteration count for PO-RSVMD show an increasing
+trend, but its averages are much smaller than those of the other two algorithms. In terms of
+time, PO-RSVMD is 76–97% faster than VMD and 53–95% faster than RSVMD. In terms
+of iteration count, PO-RSVMD reduces the number of iterations by 57–95% compared to
+the other two algorithms. In the [17, 40] dB SNR range, the iteration time and counts for
+all three algorithms show a decreasing trend, but PO-RSVMD remains the most efficient.
+This indicates that PO-RSVMD achieves higher decomposition efficiency than VMD and
+RSVMD under different SNR conditions, confirming that the algorithm can still perform
+real-time decomposition of useful signals even under strong interference.
+Starting from the decomposition accuracy, the average RMSE of each component
+derived from the three algorithms under the [0, 40] dB SNR was used, as shown in Figure 10.
+
+Figure 10. Average RMSE of three algorithms at different SNRs.
+
+As shown in Figure 10, the PO-RSVMD algorithm achieves the highest similarity
+between each modal component and the original component. Furthermore, in the [0, 15]
+dB signal-to-noise ratio range, the decomposition accuracy of this algorithm is still 35%
+higher than that of the other two algorithms, indicating that the PO-RSVMD algorithm has
+stronger denoising capabilities.
+
+Sensors 2025, 25, 1944
+
+15 of 20
+
+In conclusion, the PO-RSVMD algorithm can decompose signals more quickly, and
+its decomposition accuracy is higher than that of VMD and RSVMD, even in low signalto-noise ratio environments. The current simulation results clearly demonstrate that PORSVMD significantly reduces iteration time and computational load while maintaining
+comparable decomposition accuracy, thereby validating its suitability for real-time signal
+processing in industrial polishing.
+
+4. IMU Angular Velocity Denoising Experiment in Polishing Conditions
+Although PO-RSVMD is an improved algorithm designed for the real-time application
+of VMD, its underlying principle remains fundamentally consistent with VMD in terms of
+denoising. As explained in Section 1, any signal can be regarded as a composite signal composed of several sub-signals with specific frequencies. Typically, useful signals are primarily
+concentrated in the low-frequency components, while interference signals are more prevalent in the high-frequency components. Based on this, the conventional VMD denoising
+strategy involves removing disturbance components according to relevant signal indicators
+and then superimposing the retained signal components to reconstruct a more accurate
+signal. Following this approach, we similarly consider the low-frequency components
+obtained after removing the high-frequency components as the denoised signal.
+VMD denoising involves two key stages, signal decomposition and component reconstruction, with the effectiveness of denoising closely related to the decomposition
+parameters and the reconstruction parameters. In the decomposition stage, the main
+parameters include the number of decomposition modes and the penalty factor. In the
+reconstruction stage, the parameters refer to the number of modal components retained.
+During the decomposition stage, if the number of decomposition modes is too high or
+the penalty factor is too large, over-decomposition can occur, leading to the emergence of
+spurious components. Conversely, if the number of decomposition modes is too low or the
+penalty factor is too small, modal mixing will occur, causing a decrease in decomposition
+accuracy. In the reconstruction stage, the reconstruction coefficient, i.e., the number of
+modal components retained, plays a critical role. Retaining too many modal components
+makes it difficult to effectively filter out interference components, while retaining too few
+may result in the removal of useful signals along with noise. Therefore, the choice of
+these two types of parameters will significantly affect subsequent quantitative analysis and
+modeling work.
+In industrial polishing operations, the polishing head is subjected to severe interference
+from strong vibrations, impacts, and high-speed rotations, which causes the IMU sensor’s
+output signal to be mixed with a large number of interference components, rendering the
+IMU unable to function properly. In terms of application analysis, the data were collected
+from an IMU chip mounted on an industrial robotic arm. The industrial robot was a KUKA
+robot, equipped with an IMU with chip model BNO005, which is an industrial-grade
+IMU capable of outputting three-axis acceleration and angular velocity information. The
+signal sampling frequency was 50 Hz. Figure 11a shows a schematic diagram of the on-site
+polishing robotic arm, and Figure 11b provides the model and dimensions of the IMU chip.
+Before the polishing motor starts, the IMU’s angular velocity is relatively smooth and
+stable. However, after the motor starts, mechanical vibrations cause the IMU’s angular
+velocity to be contaminated with significant disturbance signals. As shown in Figure 12.
+Figure 12 illustrates the variation in the robotic arm’s Y-axis angular velocity before
+and after the operation of the polishing motor. Since the robotic arm still exhibits slight
+vibrations even when the motor is not operating, causing minor oscillations in the IMU’s
+angular velocity output, the average angular velocity from multiple experiments before
+motor operation is taken as the ground truth for comparison. From the figure, it is evident
+
+Sensors 2025, 25, 1944
+
+16 of 20
+
+that motor operation significantly interferes with the IMU’s angular velocity output. To
+more clearly identify the main frequency components of the vibration interference, the
+Welch power spectral density estimation method was applied to perform a spectral analysis
+of the raw data in Figure 12. The results are shown in Figure 13.
+
+(a)
+
+(b)
+
+Figure 11. A field operation diagram of the industrial robot and the model of the IMU used.
+(a) Industrial robot. (b) BNO005.
+
+Figure 12. Y-axis angular velocity before and after motor operation.
+
+Figure 13. Frequency component analysis of raw data.
+
+The results of decomposing the angular velocity sampling data using the PO-RSVMD
+method are presented. The figure displays the frequency spectra of each IMF (Intrinsic
+
+Sensors 2025, 25, 1944
+
+17 of 20
+
+Mode Function) component and compares them with the spectral components in Figure 13.
+The results demonstrate that PO-RSVMD can effectively separate the vibration interference,
+validating the effectiveness of PO-RSVMD in this application, as shown in Figure 14.
+
+Figure 14. PO-RSVMD decomposition angular velocity sampling data.
+
+In order to verify the high real-time performance and stability of PO-RSVMD in this
+polishing project scenario, comparisons of the center frequency variation and iteration
+times between RSVMD and PO-RSVMD and the RMSE results were carried out. We
+compared PO-RSVMD with RSVMD based on this experiment and found that PO-RSVMD
+significantly reduces the number of iterations, shortens the runtime, and still maintains a
+high level of decomposition accuracy. The relevant experimental parameters were set as
+follows: the RSVMD window length was 40 s, and the window step size was 0.1 s. The
+update rate in Formula (18) was set to 0.1/40 = 0.0025. The ωy data from the motor startup
+experiment were selected for analysis.
+There is a significant difference in the variation in center frequencies between RSVMD
+and PO-RSVMD, as shown in Figure 15. During the real-time window iteration process,
+even though only a small amount of data was updated each time (e.g., with a window step
+size of 0.1 s), the center frequency of RSVMD exhibits substantial fluctuations. These large
+fluctuations may lead to instability in the decomposition results, particularly when dealing
+with high-frequency vibration interference, where the drastic changes in center frequency
+can affect the accuracy and reliability of the algorithm. The proposed PO-RSVMD in this
+paper effectively mitigates the severe fluctuations in center frequency by introducing a
+learning and updating mechanism for the initial frequency. PO-RSVMD can more stably
+adjust the center frequency during each window update, thereby reducing frequency
+oscillations and enhancing the robustness of the algorithm.
+
+Figure 15. Comparison of center frequency variation between RSVMD and PO-RSVMD.
+
+Sensors 2025, 25, 1944
+
+18 of 20
+
+As shown in Figure 16, it can be observed that the number of iterations for RSVMD
+increases dramatically during the time period from 73 to 133 s, while the number of
+iterations for PO-RSVMD is significantly reduced, and its RMSE is very close to that of
+RSVMD. This high number of iterations not only increases the computational complexity
+of the algorithm, but also leads to a longer runtime. Especially when dealing with highfrequency vibration interference, an increase in the number of iterations significantly affects
+the real-time performance of the algorithm. PO-RSVMD still maintains a low RMSE value
+while reducing the number of iterations. This improvement allows PO-RSVMD to have
+higher real-time performance without performance degradation in practical applications.
+
+Figure 16. RSVMD and PO-RSVMD iterations and RMSE comparison graph.
+
+In order to evaluate the performance differences between the PO-RSVMD and RSVMD
+algorithms, this paper compares the average number of iterations, average iteration time, and
+average RMSE values of the two algorithms. See Table 2 for the specific comparison results.
+Table 2. Iteration count, iteration time, and RMSE value of RSVMD and PO-RSVMD.
+
+Algorithm
+
+Average Iteration Count
+
+Average Iteration Time (s)
+
+Average RMSE
+
+PO-RSVMD
+
+22
+23
+20
+35
+25
+
+0.029
+0.031
+0.028
+0.049
+0.035
+
+0.022
+0.022
+0.018
+0.031
+0.021
+
+RSVMD
+
+1262
+1252
+1216
+919
+1230
+
+1.710
+1.700
+1.640
+1.259
+1.671
+
+0.014
+0.014
+0.014
+0.024
+0.013
+
+It can be found in Table 2 that the average number of iterations and time of PORSVMD in this experiment are significantly lower than those of RSVMD, which shows that
+it can quickly process IMU signals in the motor polishing scenario, and the average RMSE
+difference between the two algorithms is very small, which verifies that The PO-RSVMD
+algorithm has high accuracy and good robustness in real-time applications.
+
+5. Conclusions
+This paper proposes the PO-RSVMD algorithm to address the real-time performance
+limitations of RSVMD in industrial polishing applications. During the exploration of
+
+Sensors 2025, 25, 1944
+
+19 of 20
+
+RSVMD applications, we identified two performance degradation phenomena in practical
+use: over-decomposition and increased center frequency error. To address these issues,
+the former was optimized by introducing iterative termination conditions to detect and
+handle component error mutations, while the latter was mitigated by further incorporating
+an adaptive rate learning factor to adjust the initialization of center frequency parameters. Simulation experiments verified that PO-RSVMD outperforms VMD and RSVMD
+with faster iteration times, fewer iterations, and significantly lower RMSE values for the
+decomposed modal components, indicating higher decomposition efficiency. Finally, we
+applied PO-RSVMD and RSVMD to denoising experiments performed by IMU signals
+under strong interference conditions. The results show that PO-RSVMD requires much less
+iteration time than RSVMD, and both can effectively decompose signals while ensuring
+their accuracy. The primary contribution of this work lies in the significant reduction in
+computational complexity and iteration time while maintaining comparable decomposition accuracy. Although the algorithm’s performance in handling arbitrary amplitude or
+frequency modulation signals is an important direction for future research, the current
+study focuses on optimizing RSVMD for real-time applications, particularly in the context of IMU signal processing. Future work will explore the applicability of PO-RSVMD
+to a broader range of signal types and further enhance its robustness in complex signal
+decomposition scenarios.
+Author Contributions: Conceptualization, Y.L. and X.L.; methodology, Y.L. and W.H.; software, W.H.
+and T.P.; analysis X.L. and Y.L.; writing original draft preparation, W.H., S.Q. and T.P.; writing review
+and editing, Z.R., W.H. and T.P. supervision, Y.L. and X.L.; funding acquisition, Y.L. and X.L. All
+authors have read and agreed to the published version of the manuscript.
+Funding: This work was supported by the Nation Natural Science Foundation of China under
+Grant No. 62361003, in part by the KR&DP of Guangxi under Grant Nos. GuiKeAB25069281,
+GuiKeAD25069071 and GuiKeAB23075155.
+Institutional Review Board Statement: Not applicable.
+Informed Consent Statement: Informed consent was obtained from all subjects involved in this study.
+Data Availability Statement: Publicly available datasets were analyzed in this study.
+Conflicts of Interest: The authors declare no conflict of interest. The funders had no role in the design
+of the study.
+
+References
+1.
+2.
+3.
+4.
+5.
+6.
+7.
+8.
+
+Zhang, H.; Xiong, H.; Hao, S.; Yang, G.; Wang, M.; Chen, Q. A Novel Multidimensional Hybrid Position Compensation Method
+for INS/GPS Integrated Navigation Systems During GPS Outages. IEEE Sens. J. 2024, 24, 962–974. [CrossRef]
+Liu, Y.; Chen, G.; Wei, Z.; Yang, J.; Xing, D. Denoising Method of MEMS Gyroscope Based on Interval Empirical Mode
+Decomposition. Math. Probl. Eng. 2020, 1, 3019152. [CrossRef]
+Shi, B.; Su, Y.; Zhang, D.; Wang, C.; AbouOmar, M.S. Research on Trajectory Reconstruction Method Using Automatic Identification
+System Data for Unmanned Surface Vessel. IEEE Access 2019, 7, 170374–170384. [CrossRef]
+Zeng, X.; Xian, S.; Liu, K.; Yu, Z.; Wu, Z. A method for compensating random errors in MEMS gyroscopes based on interval
+empirical mode decomposition and ARMA. Meas. Sci. Technol. 2023, 35, 015020. [CrossRef]
+Wang, C.; Cui, Y.; Liu, Y.; Li, K.; Shen, C. High-G MEMS Accelerometer Calibration Denoising Method Based on EMD and
+Time-Frequency Peak Filtering. Micromachines 2023, 14, 970. [CrossRef] [PubMed]
+Shi, Y.; Fang, L.; Xue, Z.; Qi, Z. Research on Random Drift Model Identification and Error Compensation Method of MEMS Sensor
+Based on EEMD-GRNN. Sensors 2022, 22, 5225. [CrossRef] [PubMed]
+Dragomiretskiy, K.; Zosso, D. Variational Mode Decomposition. IEEE Trans. Signal Process. 2014, 62, 531–544. [CrossRef]
+Wang, Y. An Adaptive Variational Mode Decomposition Technique with Differential Evolution Algorithm and Its Application
+Analysis. Shock Vib. 2021, 1, 2030128. [CrossRef]
+
+Sensors 2025, 25, 1944
+
+9.
+10.
+11.
+12.
+13.
+14.
+
+15.
+16.
+17.
+18.
+19.
+20.
+
+20 of 20
+
+Wang, P.; Li, G.; Gao, Y. A compensation method for gyroscope random drift based on unscented Kalman filter and support
+vector regression optimized by adaptive beetle antennae search algorithm. Appl. Intell. 2023, 53, 4350–4365. [CrossRef]
+Ding, M.; Shi, Z.; Du, B.; Wang, H.; Han, L. A signal de-noising method for a MEMS gyroscope based on improved VMD-WTD.
+Meas. Sci. Technol. 2021, 32, 095112. [CrossRef]
+Huang, H.; Zhang, X.; Yang, J.; Fu, Y.; Bian, J. Research on sensor fusion-based calibration and real-time point cloud mapping
+methods for laser lidar and IMU. Int. Arch. Photogramm. Remote Sens. Spat. Inf. Sci. 2023, XLVIII-1/W2-2023, 1199–1206.
+Zhang, T.; Yuan, M.; Wang, L.; Tang, H.; Niu, X. A Robust and Efficient IMU Array/GNSS Data Fusion Algorithm. IEEE Sens. J.
+2024, 24, 26278–26289. [CrossRef]
+Kim, H.; Choi, Y. Comparison of Three Location Estimation Methods of an Autonomous Driving Robot for Underground Mines.
+Appl. Sci. 2020, 10, 4831. [CrossRef]
+Pinto, V.H.; Amorim, A.; Rocha, L.; Moreira, A.P. Enhanced Performance Real-Time Industrial Robot Programming by Demonstration using Stereoscopic Vision and an IMU sensor. In Proceedings of the 2020 IEEE International Conference on Autonomous
+Robot Systems and Competitions (ICARSC), Ponta Delgada, Portugal, 15–17 April 2020; pp. 108–113.
+Dan, D.; Zeng, G.; Pan, R.; Yin, P. Block-wise recursive sliding variational mode decomposition method and its application on
+online separating of bridge vehicle-induced strain monitoring signals. Mech. Syst. Signal Process. 2023, 198, 110389. [CrossRef]
+Boyd, S.; Parikh, N.; Chu, E.; Peleato, B.; Eckstein, J. Distributed Optimization and Statistical Learning via the Alternating Direction
+Method of Multipliers; Now Foundations and Trends: Hanover, MA, USA, 2011.
+Jiao, Y.; Jin, Q.; Lu, X.; Wang, W. Alternating direction method of multipliers for linear inverse problems. SIAM J. Numer. Anal.
+2016, 54, 2114–2137. [CrossRef]
+Rafii, Z. Sliding Discrete Fourier Transform with Kernel Windowing [Lecture Notes]. IEEE Signal Process. Mag. 2018, 35, 88–92.
+[CrossRef]
+van der Byl, A.; Inggs, M.R. Constraining error—A sliding discrete Fourier transform investigation. Digit. Signal Process. 2016,
+51, 54–61. [CrossRef]
+Zheng, T.; Xu, A.; Xu, X.; Liu, M. Modeling and Compensation of Inertial Sensor Errors in Measurement Systems. Electronics 2023,
+12, 2458. [CrossRef]
+
+Disclaimer/Publisher’s Note: The statements, opinions and data contained in all publications are solely those of the individual
+author(s) and contributor(s) and not of MDPI and/or the editor(s). MDPI and/or the editor(s) disclaim responsibility for any injury to
+people or property resulting from any ideas, methods, instructions or products referred to in the content.
+
+
