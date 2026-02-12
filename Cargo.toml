@@ -2,7 +2,7 @@
 name = "rsvmd"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
+license = "CC0-1.0"
 description = "Recursive Sliding Variational Mode Decomposition with Python bindings"
 
 [lib]

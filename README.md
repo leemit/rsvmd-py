@@ -1,6 +1,6 @@
 # rsvmd
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: CC0-1.0](https://img.shields.io/badge/License-CC0--1.0-lightgrey.svg)](LICENSE)
 
 Recursive Sliding Variational Mode Decomposition (RSVMD & PO-RSVMD) — a Rust implementation with Python bindings for real-time signal decomposition in streaming/sliding-window applications.
 
@@ -434,4 +434,4 @@ python tests/test_performance.py
 
 ## License
 
-MIT
+CC0-1.0
