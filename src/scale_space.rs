@@ -198,6 +198,43 @@ mod tests {
     }
 
     #[test]
+    fn test_peaks_robust_to_noise() {
+        // Scale-space should find true persistent peaks despite additive noise
+        // (RSVMD paper, Section 3.2)
+        let n = 512;
+        let peaks = [25usize, 100, 200];
+        let mut spectrum = vec![0.1; n];
+
+        // Add Gaussian-shaped peaks
+        for &p in &peaks {
+            for i in 0..n / 2 + 1 {
+                spectrum[i] += 50.0 * (-(i as f64 - p as f64).powi(2) / 30.0).exp();
+            }
+        }
+
+        // Add deterministic "noise" using golden ratio fractional parts
+        for i in 0..n {
+            let noise = ((i as f64 * 0.618033988749895).fract() - 0.5) * 8.0;
+            spectrum[i] += noise.abs();
+        }
+
+        let picker = ScaleSpacePeakPicker::new(20, 1.0, 30.0);
+        let found = picker.pick_peaks(&spectrum, 3);
+        assert_eq!(found.len(), 3);
+
+        let expected = [25.0 / n as f64, 100.0 / n as f64, 200.0 / n as f64];
+        let tol = 5.0 / n as f64;
+
+        for (i, (&f, &e)) in found.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (f - e).abs() < tol,
+                "Noisy peak {}: expected {:.4}, got {:.4} (tol={:.4})",
+                i, e, f, tol
+            );
+        }
+    }
+
+    #[test]
     fn test_gaussian_smooth() {
         let signal = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
         let smoothed = gaussian_smooth(&signal, 1.0);

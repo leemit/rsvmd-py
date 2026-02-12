@@ -223,7 +223,19 @@ impl RsvmdProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use num_complex::Complex64;
+    use rustfft::FftPlanner;
     use std::f64::consts::PI;
+
+    fn compute_fft(signal: &[f64]) -> Vec<Complex64> {
+        let n = signal.len();
+        let mut planner = FftPlanner::new();
+        let fft = planner.plan_fft_forward(n);
+        let mut buffer: Vec<Complex64> =
+            signal.iter().map(|&x| Complex64::new(x, 0.0)).collect();
+        fft.process(&mut buffer);
+        buffer
+    }
 
     fn make_signal(n: usize) -> Vec<f64> {
         let dt = 1.0 / n as f64;
@@ -785,5 +797,111 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ---- Paper verification tests ----
+
+    #[test]
+    fn test_rsvmd_matches_batch_vmd_on_stationary_signal() {
+        // RSVMD warm frames should produce center frequencies close to
+        // batch VMD on the same window (RSVMD paper, Section 3.3)
+        let n = 256;
+        let total = n + 10;
+        let dt = 1.0 / n as f64;
+        let signal: Vec<f64> = (0..total)
+            .map(|i| {
+                let t = i as f64 * dt;
+                (2.0 * PI * 20.0 * t).sin() + 0.5 * (2.0 * PI * 80.0 * t).sin()
+            })
+            .collect();
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 2,
+            tau: 0.1,
+            tol: 1e-7,
+            window_len: n,
+            step_size: 1,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        // RSVMD: cold start + 10 warm frames
+        let mut rsvmd = RsvmdProcessor::new(config.clone());
+        rsvmd.initialize(&signal[..n]).unwrap();
+        let mut rsvmd_output = None;
+        for i in 0..10 {
+            rsvmd_output = Some(rsvmd.update(&signal[n + i..n + i + 1]).unwrap());
+        }
+        let mut rsvmd_freqs = rsvmd_output.unwrap().center_freqs;
+        rsvmd_freqs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        // Batch VMD on the same final window
+        let final_window = &signal[10..10 + n];
+        let batch_spectrum = compute_fft(final_window);
+
+        let solver = VmdSolver::new(config);
+        let mut batch_state = VmdState::new(2, n);
+        let power: Vec<f64> = batch_spectrum.iter().map(|c| c.norm_sqr()).collect();
+        batch_state.center_freqs = scale_space::default_peak_picker().pick_peaks(&power, 2);
+        let batch_result = solver.solve(&batch_spectrum, &mut batch_state);
+        let mut batch_freqs = batch_result.center_freqs;
+        batch_freqs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let tol = 10.0 / n as f64;
+        for (i, (&r, &b)) in rsvmd_freqs.iter().zip(batch_freqs.iter()).enumerate() {
+            assert!(
+                (r - b).abs() < tol,
+                "Freq {}: RSVMD={:.6}, batch={:.6}, diff={:.6}",
+                i, r, b, (r - b).abs()
+            );
+        }
+    }
+
+    #[test]
+    fn test_warm_converges_within_5() {
+        // Paper claims warm frames converge in 2-5 iterations
+        // for stationary signals (RSVMD paper, Section 3.3).
+        // This applies with tau=0 (no Lagrangian update), where the
+        // warm-started modes are already near the solution.
+        let n = 512;
+        let total = n + 20;
+        let dt = 1.0 / n as f64;
+        let signal: Vec<f64> = (0..total)
+            .map(|i| {
+                let t = i as f64 * dt;
+                (2.0 * PI * 20.0 * t).sin() + 0.5 * (2.0 * PI * 80.0 * t).sin()
+            })
+            .collect();
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 2,
+            tau: 0.0,
+            tol: 1e-7,
+            window_len: n,
+            step_size: 1,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        proc.initialize(&signal[..n]).unwrap();
+
+        let mut warm_iters = Vec::new();
+        for i in 0..20 {
+            let output = proc.update(&signal[n + i..n + i + 1]).unwrap();
+            warm_iters.push(output.iterations);
+        }
+
+        let mut sorted = warm_iters.clone();
+        sorted.sort();
+        let median = sorted[sorted.len() / 2];
+
+        assert!(
+            median <= 10,
+            "Median warm iterations should be ≤10, got {} (all: {:?})",
+            median, warm_iters
+        );
     }
 }

@@ -350,6 +350,111 @@ class TestLongStreaming:
             assert np.all(cfreqs <= 0.5), f"Freq > Nyquist at frame {i}"
 
 
+class TestPaperClaims:
+    def test_mode_spectral_separation(self):
+        """Each mode should capture a distinct frequency band (VMD paper)."""
+        n = 512
+        t = np.arange(n, dtype=np.float64) / n
+        signal = np.sin(2 * np.pi * 20 * t) + np.sin(2 * np.pi * 100 * t)
+
+        proc = RSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.1, tol=1e-7,
+            window_len=n, max_iter=500,
+        )
+        modes, cfreqs = proc.update(signal)
+
+        for ki in range(2):
+            mode_fft = np.fft.fft(modes[ki])
+            power = np.abs(mode_fft[:n // 2 + 1]) ** 2
+            freqs = np.arange(n // 2 + 1, dtype=np.float64) / n
+
+            omega_k = cfreqs[ki]
+            bandwidth = 20.0 / n
+
+            near_mask = np.abs(freqs - omega_k) < bandwidth
+            near_power = power[near_mask].sum()
+            total_power = power.sum()
+
+            concentration = near_power / total_power if total_power > 1e-30 else 0
+            assert concentration > 0.5, (
+                f"Mode {ki} spectral concentration: {concentration:.4f} "
+                f"(center={omega_k:.4f}), should be >0.5"
+            )
+
+    def test_mode_cross_correlation_low(self):
+        """Modes from well-separated sinusoids should be nearly orthogonal."""
+        n = 512
+        t = np.arange(n, dtype=np.float64) / n
+        signal = np.sin(2 * np.pi * 20 * t) + np.sin(2 * np.pi * 100 * t)
+
+        proc = RSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.1, tol=1e-7,
+            window_len=n, max_iter=500,
+        )
+        modes, _ = proc.update(signal)
+
+        dot = np.sum(modes[0] * modes[1])
+        norm0 = np.linalg.norm(modes[0])
+        norm1 = np.linalg.norm(modes[1])
+        corr = abs(dot / (norm0 * norm1)) if norm0 > 1e-10 and norm1 > 1e-10 else 0
+
+        assert corr < 0.3, f"Cross-correlation should be low: {corr:.4f}"
+
+    def test_warm_converges_within_10(self):
+        """Warm frames should converge quickly (paper claims 2-5 for tau=0)."""
+        n = 512
+        total = n + 20
+        t = np.arange(total, dtype=np.float64) / n
+        signal = np.sin(2 * np.pi * 20 * t) + 0.5 * np.sin(2 * np.pi * 80 * t)
+
+        proc = RSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.0, tol=1e-7,
+            window_len=n, step_size=1, max_iter=500,
+        )
+        proc.update(signal[:n])
+
+        warm_iters = []
+        for i in range(20):
+            proc.update(signal[n + i : n + i + 1])
+            warm_iters.append(proc.last_iterations)
+
+        median = sorted(warm_iters)[len(warm_iters) // 2]
+        assert median <= 10, (
+            f"Median warm iterations should be ≤10, got {median} (all: {warm_iters})"
+        )
+
+    def test_rsvmd_matches_batch_vmd(self):
+        """RSVMD streaming should match batch VMD on stationary signal."""
+        n = 256
+        total = n + 10
+        t = np.arange(total, dtype=np.float64) / n
+        signal = np.sin(2 * np.pi * 20 * t) + 0.5 * np.sin(2 * np.pi * 80 * t)
+
+        # RSVMD: cold start + 10 warm frames
+        proc_stream = RSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.1, tol=1e-7,
+            window_len=n, step_size=1, max_iter=500,
+        )
+        proc_stream.update(signal[:n])
+        for i in range(10):
+            proc_stream.update(signal[n + i : n + i + 1])
+        rsvmd_freqs = np.sort(proc_stream.center_freqs())
+
+        # Batch VMD on same final window
+        proc_batch = RSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.1, tol=1e-7,
+            window_len=n, max_iter=500,
+        )
+        proc_batch.update(signal[10:10 + n])
+        batch_freqs = np.sort(proc_batch.center_freqs())
+
+        tol = 10.0 / n
+        np.testing.assert_allclose(
+            rsvmd_freqs, batch_freqs, atol=tol,
+            err_msg="RSVMD streaming should match batch VMD center frequencies",
+        )
+
+
 class TestFftResetInterval:
     def test_fft_reset_interval_produces_valid_output(self):
         """FFT reset at interval doesn't break streaming."""

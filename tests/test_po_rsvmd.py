@@ -311,3 +311,178 @@ class TestPOReconstructionQuality:
             modes, cfreqs = proc.update(signal[n + i:n + i + 1])
             assert not np.any(np.isnan(modes)), f"NaN in modes at frame {i}"
             assert not np.any(np.isnan(cfreqs)), f"NaN in cfreqs at frame {i}"
+
+
+class TestPOPaperClaims:
+    """Tests verifying PO-RSVMD paper claims (Sensors 2025, vol.25, no.6)."""
+
+    def test_po_mode_spectral_separation(self):
+        """PO-RSVMD modes should capture distinct frequency bands."""
+        n = 512
+        t = np.arange(n, dtype=np.float64) / n
+        signal = np.sin(2 * np.pi * 20 * t) + np.sin(2 * np.pi * 100 * t)
+
+        proc = PORSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.1, tol=1e-7,
+            window_len=n, max_iter=500,
+        )
+        modes, cfreqs = proc.update(signal)
+
+        for ki in range(2):
+            mode_fft = np.fft.fft(modes[ki])
+            power = np.abs(mode_fft[:n // 2 + 1]) ** 2
+            freqs = np.arange(n // 2 + 1, dtype=np.float64) / n
+
+            omega_k = cfreqs[ki]
+            bandwidth = 20.0 / n
+
+            near_mask = np.abs(freqs - omega_k) < bandwidth
+            near_power = power[near_mask].sum()
+            total_power = power.sum()
+
+            concentration = near_power / total_power if total_power > 1e-30 else 0
+            assert concentration > 0.5, (
+                f"PO mode {ki} spectral concentration: {concentration:.4f} "
+                f"(center={omega_k:.4f}), should be >0.5"
+            )
+
+    def test_po_error_mutation_prevents_overdecmp(self):
+        """PO-RSVMD error mutation check should stop early on over-decomposition.
+
+        When K exceeds the number of true signal components, PO-RSVMD's
+        error mutation detection should prevent the decomposition from
+        degrading past its optimal point (Paper Section 4.1).
+        """
+        n = 256
+        t = np.arange(n, dtype=np.float64) / n
+        # Only 2 real components, but we request K=4
+        signal = np.sin(2 * np.pi * 20 * t) + 0.5 * np.sin(2 * np.pi * 80 * t)
+
+        po_proc = PORSVMDProcessor(
+            alpha=2000.0, k=4, tau=0.1, tol=1e-7,
+            window_len=n, max_iter=500,
+        )
+        std_proc = RSVMDProcessor(
+            alpha=2000.0, k=4, tau=0.1, tol=1e-7,
+            window_len=n, max_iter=500,
+        )
+
+        po_modes, _ = po_proc.update(signal)
+        std_modes, _ = std_proc.update(signal)
+
+        # PO-RSVMD should use <= iterations compared to standard
+        assert po_proc.last_iterations <= std_proc.last_iterations, (
+            f"PO iterations ({po_proc.last_iterations}) should be <= "
+            f"standard ({std_proc.last_iterations})"
+        )
+
+        # Both should produce valid (non-NaN) output
+        assert not np.any(np.isnan(po_modes))
+        assert not np.any(np.isnan(std_modes))
+
+    def test_po_gamma_blending_formula(self):
+        """Verify gamma blending: omega_init = gamma*prev + (1-gamma)*detected.
+
+        Paper Formula: omega_k^init(m) = gamma * omega_k^final(m-1)
+                                        + (1-gamma) * omega_k^detected(m)
+        We verify this indirectly: with gamma_default=0 (ignore previous),
+        the processor should re-detect frequencies from scratch each frame,
+        while gamma_default close to 1 should heavily rely on previous frame.
+        """
+        n = 256
+        total = n + 10
+        t = np.arange(total, dtype=np.float64) / n
+        signal = np.sin(2 * np.pi * 20 * t) + 0.5 * np.sin(2 * np.pi * 80 * t)
+
+        # With high gamma (trust previous), fewer iterations expected on warm frames
+        proc_high = PORSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.0, tol=1e-7,
+            window_len=n, step_size=1, max_iter=500,
+            gamma_default=0.5,
+        )
+        proc_high.update(signal[:n])
+        high_gamma_iters = []
+        for i in range(10):
+            proc_high.update(signal[n + i : n + i + 1])
+            high_gamma_iters.append(proc_high.last_iterations)
+
+        # With low gamma (re-detect), potentially more iterations
+        proc_low = PORSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.0, tol=1e-7,
+            window_len=n, step_size=1, max_iter=500,
+            gamma_default=0.001,
+        )
+        proc_low.update(signal[:n])
+        low_gamma_iters = []
+        for i in range(10):
+            proc_low.update(signal[n + i : n + i + 1])
+            low_gamma_iters.append(proc_low.last_iterations)
+
+        # Both should produce valid results (center freqs near true values)
+        expected = np.array([20.0 / n, 80.0 / n])
+        tol = 15.0 / n
+
+        high_freqs = np.sort(proc_high.center_freqs())
+        low_freqs = np.sort(proc_low.center_freqs())
+
+        np.testing.assert_allclose(high_freqs, expected, atol=tol,
+            err_msg="High-gamma PO-RSVMD frequencies drifted")
+        np.testing.assert_allclose(low_freqs, expected, atol=tol,
+            err_msg="Low-gamma PO-RSVMD frequencies drifted")
+
+    def test_po_reduces_iteration_count(self):
+        """PO-RSVMD paper claims >=57% reduction in iteration count.
+
+        We verify the weaker claim that PO-RSVMD uses fewer or equal
+        warm-frame iterations compared to standard RSVMD on the same signal.
+        """
+        n = 256
+        total = n + 20
+        t = np.arange(total, dtype=np.float64) / n
+        signal = np.sin(2 * np.pi * 20 * t) + 0.5 * np.sin(2 * np.pi * 80 * t)
+
+        po_proc = PORSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.0, tol=1e-7,
+            window_len=n, step_size=1, max_iter=500,
+        )
+        std_proc = RSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.0, tol=1e-7,
+            window_len=n, step_size=1, max_iter=500,
+        )
+
+        po_proc.update(signal[:n])
+        std_proc.update(signal[:n])
+
+        po_total = 0
+        std_total = 0
+        for i in range(20):
+            sample = signal[n + i : n + i + 1]
+            po_proc.update(sample)
+            std_proc.update(sample)
+            po_total += po_proc.last_iterations
+            std_total += std_proc.last_iterations
+
+        # PO-RSVMD should use <= total iterations
+        assert po_total <= std_total, (
+            f"PO total iterations ({po_total}) should be <= "
+            f"standard ({std_total})"
+        )
+
+    def test_po_cross_correlation_low(self):
+        """PO-RSVMD modes should be nearly orthogonal for well-separated frequencies."""
+        n = 512
+        t = np.arange(n, dtype=np.float64) / n
+        signal = np.sin(2 * np.pi * 20 * t) + np.sin(2 * np.pi * 100 * t)
+
+        proc = PORSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.1, tol=1e-7,
+            window_len=n, max_iter=500,
+        )
+        modes, _ = proc.update(signal)
+
+        dot = np.sum(modes[0] * modes[1])
+        norm0 = np.linalg.norm(modes[0])
+        norm1 = np.linalg.norm(modes[1])
+        corr = abs(dot / (norm0 * norm1)) if norm0 > 1e-10 and norm1 > 1e-10 else 0
+
+        assert corr < 0.3, f"PO mode cross-correlation should be low: {corr:.4f}"

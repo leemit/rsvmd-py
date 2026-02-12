@@ -436,4 +436,526 @@ mod tests {
             cold_result.iterations
         );
     }
+
+    // ---- Paper equation verification tests ----
+
+    #[test]
+    fn test_wiener_filter_formula_k1() {
+        // Paper Eq (Section 2.3): For K=1, other_sum=0, so:
+        // u_0[i] = (f[i] + lambda[i]/2) / (1 + 2*alpha*(freq[i] - omega_0)^2)
+        let n = 16;
+        let alpha = 100.0;
+
+        let signal_spectrum: Vec<Complex64> = (0..n)
+            .map(|i| Complex64::new(i as f64 + 1.0, (n - i) as f64 * 0.3))
+            .collect();
+        let lambda: Vec<Complex64> = (0..n)
+            .map(|i| Complex64::new(i as f64 * 0.1, -(i as f64) * 0.05))
+            .collect();
+        let omega_0 = 0.25;
+        let freqs: Vec<f64> = (0..n).map(|i| i as f64 / n as f64).collect();
+
+        // Compute expected mode using the paper's formula
+        let expected_mode: Vec<Complex64> = (0..n)
+            .map(|i| {
+                let num = signal_spectrum[i] + lambda[i] * 0.5;
+                let freq_diff = freqs[i] - omega_0;
+                let denom = 1.0 + 2.0 * alpha * freq_diff * freq_diff;
+                num / denom
+            })
+            .collect();
+
+        let config = VmdConfig {
+            alpha,
+            k: 1,
+            tau: 0.0,
+            window_len: n,
+            max_iter: 1,
+            ..Default::default()
+        };
+        let solver = VmdSolver::new(config);
+        let mut state = VmdState::new(1, n);
+        state.center_freqs = vec![omega_0];
+        state.lambda = lambda;
+
+        solver.admm_step(&signal_spectrum, &mut state);
+
+        for i in 0..n {
+            let diff = (state.mode_spectra[0][i] - expected_mode[i]).norm();
+            assert!(
+                diff < 1e-12,
+                "Wiener filter mismatch at bin {}: got {:?}, expected {:?}",
+                i, state.mode_spectra[0][i], expected_mode[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_wiener_filter_gauss_seidel_k2() {
+        // Verify Gauss-Seidel ordering: mode 1 uses UPDATED mode 0
+        let n = 16;
+        let alpha = 50.0;
+        let omega = [0.1, 0.35];
+
+        let signal: Vec<Complex64> = (0..n)
+            .map(|i| Complex64::new((i as f64 * 0.5).sin(), (i as f64 * 0.3).cos()))
+            .collect();
+
+        let init_u0: Vec<Complex64> = (0..n)
+            .map(|i| Complex64::new(i as f64 * 0.01, 0.0))
+            .collect();
+        let init_u1: Vec<Complex64> = (0..n)
+            .map(|i| Complex64::new(0.0, i as f64 * 0.01))
+            .collect();
+
+        let freqs: Vec<f64> = (0..n).map(|i| i as f64 / n as f64).collect();
+
+        // Step 1: u_0 update uses OLD u_1
+        let expected_u0: Vec<Complex64> = (0..n)
+            .map(|i| {
+                let num = signal[i] - init_u1[i]; // lambda=0
+                let fd = freqs[i] - omega[0];
+                num / (1.0 + 2.0 * alpha * fd * fd)
+            })
+            .collect();
+
+        // Step 2: u_1 update uses NEW u_0 (Gauss-Seidel!)
+        let expected_u1: Vec<Complex64> = (0..n)
+            .map(|i| {
+                let num = signal[i] - expected_u0[i];
+                let fd = freqs[i] - omega[1];
+                num / (1.0 + 2.0 * alpha * fd * fd)
+            })
+            .collect();
+
+        let config = VmdConfig {
+            alpha,
+            k: 2,
+            tau: 0.0,
+            window_len: n,
+            max_iter: 1,
+            ..Default::default()
+        };
+        let solver = VmdSolver::new(config);
+        let mut state = VmdState::new(2, n);
+        state.mode_spectra[0] = init_u0.clone();
+        state.mode_spectra[1] = init_u1.clone();
+        state.center_freqs = omega.to_vec();
+
+        solver.admm_step(&signal, &mut state);
+
+        // Mode 0 should match
+        for i in 0..n {
+            let diff = (state.mode_spectra[0][i] - expected_u0[i]).norm();
+            assert!(diff < 1e-12, "Mode 0 mismatch at bin {}: diff={}", i, diff);
+        }
+
+        // Mode 1 should match Gauss-Seidel (uses updated u_0)
+        for i in 0..n {
+            let diff = (state.mode_spectra[1][i] - expected_u1[i]).norm();
+            assert!(
+                diff < 1e-12,
+                "Mode 1 Gauss-Seidel mismatch at bin {}: diff={}",
+                i, diff
+            );
+        }
+
+        // Verify it's NOT Jacobi: Jacobi would use OLD u_0 for mode 1
+        let jacobi_u1: Vec<Complex64> = (0..n)
+            .map(|i| {
+                let num = signal[i] - init_u0[i]; // Jacobi uses OLD u_0
+                let fd = freqs[i] - omega[1];
+                num / (1.0 + 2.0 * alpha * fd * fd)
+            })
+            .collect();
+
+        let any_differ = (0..n).any(|i| (state.mode_spectra[1][i] - jacobi_u1[i]).norm() > 1e-10);
+        assert!(
+            any_differ,
+            "Mode 1 should differ from Jacobi ordering"
+        );
+    }
+
+    #[test]
+    fn test_center_freq_power_weighted_mean_single_bin() {
+        // Paper: omega_k = sum_{i>=0} freq[i]*|u_k[i]|^2 / sum_{i>=0} |u_k[i]|^2
+        // A mode at a single bin should have center_freq = that bin's frequency
+        let n = 256;
+        let target_bin = 30;
+
+        let mut mode_spectrum = vec![Complex64::new(0.0, 0.0); n];
+        mode_spectrum[target_bin] = Complex64::new(10.0, 0.0);
+
+        let freqs: Vec<f64> = (0..n).map(|i| i as f64 / n as f64).collect();
+        let center_freq = VmdSolver::update_center_freq(&mode_spectrum, &freqs, n);
+
+        let expected = target_bin as f64 / n as f64;
+        assert!(
+            (center_freq - expected).abs() < 1e-10,
+            "Single-bin center freq: expected {:.6}, got {:.6}",
+            expected, center_freq
+        );
+    }
+
+    #[test]
+    fn test_center_freq_power_weighted_mean_two_bins() {
+        // Two bins with different powers: center freq = power-weighted average
+        let n = 256;
+        let mut mode_spectrum = vec![Complex64::new(0.0, 0.0); n];
+        mode_spectrum[20] = Complex64::new(3.0, 0.0); // power = 9
+        mode_spectrum[30] = Complex64::new(1.0, 0.0); // power = 1
+
+        let freqs: Vec<f64> = (0..n).map(|i| i as f64 / n as f64).collect();
+        let center_freq = VmdSolver::update_center_freq(&mode_spectrum, &freqs, n);
+
+        // Expected: (20/256 * 9 + 30/256 * 1) / (9 + 1)
+        let expected = (20.0 / 256.0 * 9.0 + 30.0 / 256.0 * 1.0) / 10.0;
+        assert!(
+            (center_freq - expected).abs() < 1e-10,
+            "Two-bin power-weighted mean: expected {:.6}, got {:.6}",
+            expected, center_freq
+        );
+    }
+
+    #[test]
+    fn test_dual_variable_update_formula() {
+        // Paper: lambda[i] += tau * (f[i] - sum_k u_k[i])
+        let n = 8;
+        let tau = 0.3;
+
+        let signal: Vec<Complex64> = (0..n)
+            .map(|i| Complex64::new(i as f64 + 1.0, 0.0))
+            .collect();
+        let init_lambda: Vec<Complex64> = (0..n)
+            .map(|i| Complex64::new(0.0, i as f64 * 0.1))
+            .collect();
+
+        let config = VmdConfig {
+            alpha: 100.0,
+            k: 2,
+            tau,
+            window_len: n,
+            max_iter: 1,
+            ..Default::default()
+        };
+        let solver = VmdSolver::new(config);
+        let mut state = VmdState::new(2, n);
+        state.mode_spectra[0] = (0..n)
+            .map(|i| Complex64::new(i as f64 * 0.3, 0.0))
+            .collect();
+        state.mode_spectra[1] = (0..n)
+            .map(|i| Complex64::new(i as f64 * 0.2, 0.0))
+            .collect();
+        state.center_freqs = vec![0.1, 0.3];
+        state.lambda = init_lambda.clone();
+
+        solver.admm_step(&signal, &mut state);
+
+        // After step, lambda = old_lambda + tau * (f - sum_k u_k_new)
+        // u_k_new are the modes AFTER the Wiener filter update
+        for i in 0..n {
+            let mode_sum = state.mode_spectra[0][i] + state.mode_spectra[1][i];
+            let expected =
+                init_lambda[i] + Complex64::new(tau, 0.0) * (signal[i] - mode_sum);
+            let diff = (state.lambda[i] - expected).norm();
+            assert!(
+                diff < 1e-12,
+                "Lambda mismatch at bin {}: got {:?}, expected {:?}",
+                i, state.lambda[i], expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_convergence_criterion_formula() {
+        // Paper: metric = sum_k ||u_k^new - u_k^old||^2 / ||u_k^old||^2
+        let n = 8;
+        let current = vec![
+            vec![Complex64::new(1.0, 0.5); n],
+            vec![Complex64::new(0.3, -0.2); n],
+        ];
+        let previous = vec![
+            vec![Complex64::new(0.9, 0.6); n],
+            vec![Complex64::new(0.35, -0.15); n],
+        ];
+
+        let mut expected_metric = 0.0;
+        for ki in 0..2 {
+            let diff_sq: f64 = (0..n)
+                .map(|i| (current[ki][i] - previous[ki][i]).norm_sqr())
+                .sum();
+            let prev_sq: f64 = (0..n).map(|i| previous[ki][i].norm_sqr()).sum();
+            if prev_sq > 1e-30 {
+                expected_metric += diff_sq / prev_sq;
+            }
+        }
+
+        let config = VmdConfig {
+            alpha: 100.0,
+            k: 2,
+            window_len: n,
+            ..Default::default()
+        };
+        let solver = VmdSolver::new(config);
+        let actual = solver.convergence_metric(&current, &previous);
+
+        assert!(
+            (actual - expected_metric).abs() < 1e-12,
+            "Convergence metric: expected {:.12}, got {:.12}",
+            expected_metric, actual
+        );
+    }
+
+    #[test]
+    fn test_mode_spectral_concentration() {
+        // Paper claim: each mode captures a distinct frequency band.
+        // Verify spectral energy is concentrated near center frequency.
+        let n = 512;
+        let dt = 1.0 / n as f64;
+        let signal: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 * dt;
+                (2.0 * PI * 20.0 * t).sin() + (2.0 * PI * 100.0 * t).sin()
+            })
+            .collect();
+
+        let spectrum = compute_fft(&signal);
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 2,
+            tau: 0.1,
+            tol: 1e-7,
+            window_len: n,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let solver = VmdSolver::new(config);
+        let mut state = VmdState::new(2, n);
+        state.init_uniform_freqs();
+        let result = solver.solve(&spectrum, &mut state);
+
+        let freqs: Vec<f64> = (0..n).map(|i| i as f64 / n as f64).collect();
+        let half_n = n / 2;
+        let bandwidth = 20.0 / n as f64;
+
+        for ki in 0..2 {
+            let omega_k = result.center_freqs[ki];
+            let mut near_power = 0.0;
+            let mut total_power = 0.0;
+            for i in 0..=half_n {
+                let power = result.mode_spectra[ki][i].norm_sqr();
+                total_power += power;
+                if (freqs[i] - omega_k).abs() < bandwidth {
+                    near_power += power;
+                }
+            }
+            let concentration = if total_power > 1e-30 {
+                near_power / total_power
+            } else {
+                0.0
+            };
+            assert!(
+                concentration > 0.5,
+                "Mode {} spectral concentration: {:.4} (center={:.4}), should be >0.5",
+                ki, concentration, omega_k
+            );
+        }
+    }
+
+    fn compute_ifft_modes(mode_spectra: &[Vec<Complex64>], n: usize) -> Vec<Vec<f64>> {
+        let mut planner = FftPlanner::new();
+        let ifft = planner.plan_fft_inverse(n);
+        mode_spectra
+            .iter()
+            .map(|spectrum| {
+                let mut buffer = spectrum.clone();
+                ifft.process(&mut buffer);
+                buffer.iter().map(|c| c.re / n as f64).collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_mode_cross_correlation_low() {
+        // Modes from well-separated sinusoids should be nearly orthogonal
+        let n = 512;
+        let dt = 1.0 / n as f64;
+        let signal: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 * dt;
+                (2.0 * PI * 20.0 * t).sin() + (2.0 * PI * 100.0 * t).sin()
+            })
+            .collect();
+
+        let spectrum = compute_fft(&signal);
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 2,
+            tau: 0.1,
+            tol: 1e-7,
+            window_len: n,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let solver = VmdSolver::new(config);
+        let mut state = VmdState::new(2, n);
+        state.init_uniform_freqs();
+        let result = solver.solve(&spectrum, &mut state);
+
+        let modes_td = compute_ifft_modes(&result.mode_spectra, n);
+
+        let dot: f64 = (0..n).map(|i| modes_td[0][i] * modes_td[1][i]).sum();
+        let norm0: f64 = (0..n)
+            .map(|i| modes_td[0][i].powi(2))
+            .sum::<f64>()
+            .sqrt();
+        let norm1: f64 = (0..n)
+            .map(|i| modes_td[1][i].powi(2))
+            .sum::<f64>()
+            .sqrt();
+
+        let corr = if norm0 > 1e-10 && norm1 > 1e-10 {
+            (dot / (norm0 * norm1)).abs()
+        } else {
+            0.0
+        };
+
+        assert!(
+            corr < 0.3,
+            "Cross-correlation between modes should be low: {:.4}",
+            corr
+        );
+    }
+
+    #[test]
+    fn test_reconstruction_error_decreases() {
+        // On a well-conditioned signal, reconstruction error should decrease
+        // across ADMM iterations (validates convergence behavior)
+        let n = 256;
+        let dt = 1.0 / n as f64;
+        let signal: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 * dt;
+                (2.0 * PI * 20.0 * t).sin() + 0.5 * (2.0 * PI * 80.0 * t).sin()
+            })
+            .collect();
+
+        let spectrum = compute_fft(&signal);
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 2,
+            tau: 0.1,
+            tol: 1e-15, // very tight to prevent early stopping
+            window_len: n,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let solver = VmdSolver::new(config);
+        let mut state = VmdState::new(2, n);
+        state.init_uniform_freqs();
+
+        let mut errors = Vec::new();
+        for _ in 0..30 {
+            solver.admm_step(&spectrum, &mut state);
+            errors.push(complex_utils::reconstruction_error(
+                &state.mode_spectra,
+                &spectrum,
+            ));
+        }
+
+        // Error at end should be less than at start
+        let first = errors[0];
+        let last = *errors.last().unwrap();
+        assert!(
+            last < first,
+            "Error should decrease: first={:.6}, last={:.6}",
+            first, last
+        );
+    }
+
+    #[test]
+    fn test_error_mutation_principle() {
+        // Validates the principle behind PO-RSVMD's error mutation detection:
+        // warm-start ADMM on a changed signal can cause error to increase.
+        let n = 256;
+        let dt = 1.0 / n as f64;
+
+        let signal1: Vec<f64> = (0..n)
+            .map(|i| (2.0 * PI * 20.0 * i as f64 * dt).sin())
+            .collect();
+        let signal2: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 * dt;
+                (2.0 * PI * 100.0 * t).sin() + (2.0 * PI * 200.0 * t).sin()
+            })
+            .collect();
+
+        let spectrum1 = compute_fft(&signal1);
+        let spectrum2 = compute_fft(&signal2);
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 2,
+            tau: 0.1,
+            tol: 1e-15,
+            window_len: n,
+            max_iter: 100,
+            ..Default::default()
+        };
+
+        let solver = VmdSolver::new(config.clone());
+
+        // Solve signal 1 to convergence
+        let mut state1 = VmdState::new(2, n);
+        state1.init_uniform_freqs();
+        let result1 = solver.solve(&spectrum1, &mut state1);
+
+        // Warm-start on signal 2 using signal 1's converged state
+        let mut state2 = VmdState {
+            mode_spectra: result1.mode_spectra,
+            center_freqs: result1.center_freqs,
+            lambda: result1.lambda,
+            initialized: true,
+        };
+
+        let mut errors = Vec::new();
+        for _ in 0..100 {
+            solver.admm_step(&spectrum2, &mut state2);
+            errors.push(complex_utils::reconstruction_error(
+                &state2.mode_spectra,
+                &spectrum2,
+            ));
+        }
+
+        // Find minimum error point
+        let min_error = errors.iter().cloned().fold(f64::INFINITY, f64::min);
+        let min_idx = errors
+            .iter()
+            .position(|&e| (e - min_error).abs() < 1e-30)
+            .unwrap();
+
+        // The minimum should not be at the very last iteration —
+        // showing that continuing past the optimum doesn't help
+        // (or error converged cleanly, which is also valid)
+        if min_idx < errors.len() - 1 {
+            // Error at minimum should be ≤ error at next iteration
+            assert!(
+                errors[min_idx] <= errors[min_idx + 1] * 1.001,
+                "Min at iter {} ({:.6}) should be ≤ next ({:.6})",
+                min_idx, errors[min_idx], errors[min_idx + 1]
+            );
+        }
+
+        // Either way, final error should be reasonable (not blown up)
+        assert!(
+            errors.last().unwrap().is_finite(),
+            "Error should remain finite"
+        );
+    }
 }

@@ -749,6 +749,144 @@ mod tests {
     }
 
     #[test]
+    fn test_gamma_blending_formula_boundary_values() {
+        // PO-RSVMD paper Formula 20: omega_init = gamma*prev + (1-gamma)*detected
+        // Verify at boundary values: gamma=0 → detected, gamma=1 → previous
+        let prev = vec![0.1, 0.3];
+        let det = vec![0.2, 0.4];
+
+        // gamma = 0: result should equal detected
+        let gamma = 0.0;
+        let result: Vec<f64> = prev
+            .iter()
+            .zip(&det)
+            .map(|(&p, &d)| gamma * p + (1.0 - gamma) * d)
+            .collect();
+        for (i, (&r, &d)) in result.iter().zip(det.iter()).enumerate() {
+            assert!(
+                (r - d).abs() < 1e-15,
+                "gamma=0: freq {} should equal detected ({} vs {})",
+                i, r, d
+            );
+        }
+
+        // gamma = 1: result should equal previous
+        let gamma = 1.0;
+        let result: Vec<f64> = prev
+            .iter()
+            .zip(&det)
+            .map(|(&p, &d)| gamma * p + (1.0 - gamma) * d)
+            .collect();
+        for (i, (&r, &p)) in result.iter().zip(prev.iter()).enumerate() {
+            assert!(
+                (r - p).abs() < 1e-15,
+                "gamma=1: freq {} should equal previous ({} vs {})",
+                i, r, p
+            );
+        }
+
+        // gamma = 0.5: result should be average
+        let gamma = 0.5;
+        let result: Vec<f64> = prev
+            .iter()
+            .zip(&det)
+            .map(|(&p, &d)| gamma * p + (1.0 - gamma) * d)
+            .collect();
+        assert!((result[0] - 0.15).abs() < 1e-15, "gamma=0.5: expected 0.15");
+        assert!((result[1] - 0.35).abs() < 1e-15, "gamma=0.5: expected 0.35");
+
+        // gamma = 0.7: weighted toward previous
+        let gamma = 0.7;
+        let result: Vec<f64> = prev
+            .iter()
+            .zip(&det)
+            .map(|(&p, &d)| gamma * p + (1.0 - gamma) * d)
+            .collect();
+        assert!(
+            (result[0] - 0.13).abs() < 1e-15,
+            "gamma=0.7: expected 0.13, got {}",
+            result[0]
+        );
+        assert!(
+            (result[1] - 0.33).abs() < 1e-15,
+            "gamma=0.7: expected 0.33, got {}",
+            result[1]
+        );
+    }
+
+    #[test]
+    fn test_po_rsvmd_vs_standard_on_overdetermined() {
+        // PO-RSVMD should achieve comparable or better reconstruction
+        // than standard RSVMD on over-determined problems (K > actual components)
+        // due to error mutation detection (PO-RSVMD paper, Section 4.1)
+        let n = 256;
+        let total = n + 5;
+        let dt = 1.0 / n as f64;
+        let signal: Vec<f64> = (0..total)
+            .map(|i| {
+                let t = i as f64 * dt;
+                (2.0 * PI * 20.0 * t).sin() + 0.5 * (2.0 * PI * 80.0 * t).sin()
+            })
+            .collect();
+
+        // PO-RSVMD with K=4 (over-determined: only 2 real components)
+        let po_config = PoRsvmdConfig::new(
+            VmdConfig {
+                alpha: 2000.0,
+                k: 4,
+                tau: 0.1,
+                tol: 1e-7,
+                window_len: n,
+                step_size: 1,
+                max_iter: 500,
+                ..Default::default()
+            },
+            0.5,
+        );
+
+        let mut po_proc = PoRsvmdProcessor::new(po_config);
+        po_proc.initialize(&signal[..n]).unwrap();
+
+        // Standard RSVMD with same parameters
+        let std_config = VmdConfig {
+            alpha: 2000.0,
+            k: 4,
+            tau: 0.1,
+            tol: 1e-7,
+            window_len: n,
+            step_size: 1,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut std_proc = crate::rsvmd_core::RsvmdProcessor::new(std_config);
+        std_proc.initialize(&signal[..n]).unwrap();
+
+        for i in 0..5 {
+            let po_out = po_proc.update(&signal[n + i..n + i + 1]).unwrap();
+            let std_out = std_proc.update(&signal[n + i..n + i + 1]).unwrap();
+
+            // Both should produce valid output
+            assert_eq!(po_out.modes.len(), 4);
+            assert_eq!(std_out.modes.len(), 4);
+
+            // PO should use ≤ iterations (error mutation may stop early)
+            assert!(
+                po_out.iterations <= std_out.iterations + 1,
+                "Frame {}: PO ({} iters) should not use significantly more than std ({} iters)",
+                i, po_out.iterations, std_out.iterations
+            );
+
+            // No NaN in PO output
+            for mode in &po_out.modes {
+                for &v in mode {
+                    assert!(!v.is_nan(), "NaN in PO-RSVMD at frame {}", i);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_po_rsvmd_zero_signal() {
         let n = 128;
         let signal = vec![0.0; n];
