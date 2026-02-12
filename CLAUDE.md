@@ -15,8 +15,6 @@ A Rust implementation of RSVMD and PO-RSVMD with Python bindings via PyO3, desig
 9. [Integration Notes (ctrade)](#9-integration-notes-ctrade)
 10. [References](#10-references)
 
-One caveat noted below : the PO-RSVMD paper's Formula 20 (exact empirical mapping for gamma) needs to be read from the paper @ref-docs/RSVMD-paper-at-sensors-25-01944.txt and update the approximation used below for gamma; The spec below includes a reasonable approximation but the paper may have a more nuanced mapping.
-
 ---
 
 ## 1. Project Overview
@@ -322,31 +320,22 @@ Instead of direct warm-start, blend previous and current estimates:
 omega_k^{init}(m) = gamma * omega_k^{final}(m-1) + (1 - gamma) * omega_k^{detected}(m)
 ```
 
-where `gamma` is the rate learning factor, adapted based on iteration time changes:
+where `gamma` is the rate learning factor (called `a` in the paper), adapted based on iteration time changes.
 
-**Adaptation logic:**
+**Adaptation logic (Formula 20 from the PO-RSVMD paper):**
 
-```
-delta_t = |iteration_time(m) - iteration_time(m-1)|
-
-if delta_t is within normal range:
-    gamma = 0.5    (default — equal blend)
-else:
-    gamma = f(delta_t)    (empirical mapping — see paper Formula 20)
-```
-
-The insight: iteration time correlates with how much the signal has changed. Fast convergence (small delta_t) means the signal is stable and previous frequencies are trustworthy (higher gamma). Slow convergence (large delta_t) means the signal has shifted and fresh detection is needed (lower gamma).
-
-**Practical note**: The exact mapping function f(delta_t) in Formula 20 of the paper is empirically derived. For a first implementation, a simple scheme works:
+`delta_t` is the absolute difference between the two most recent iteration times: `delta_t = |iteration_time(m) - iteration_time(m-1)|`. The mapping from `delta_t` to the rate factor `gamma` is a 6-tier piecewise function:
 
 ```
-if delta_t < mean_time * 0.5:
-    gamma = 0.7    // signal stable, trust previous
-elif delta_t > mean_time * 2.0:
-    gamma = 0.2    // signal changed significantly, trust new detection
-else:
-    gamma = 0.5    // default blend
+gamma = 0.0,    delta_t >= 0.8    // severe instability, ignore previous result entirely
+        0.001,  0.6 <= delta_t < 0.8   // very high instability
+        0.01,   0.4 <= delta_t < 0.6   // high instability
+        0.05,   0.2 <= delta_t < 0.4   // moderate instability
+        0.2,    0.1 <= delta_t < 0.2   // mild instability
+        0.5,    delta_t < 0.1          // stable (default)
 ```
+
+The insight: iteration time correlates with how much the signal has changed. Stable iteration times (small delta_t) mean the signal is stable and previous frequencies are trustworthy (higher gamma). Large delta_t indicates the signal has shifted significantly and the previous result should be largely discarded (lower gamma, approaching 0).
 
 The `omega_k^{detected}(m)` for the current frame can be obtained by running scale-space peak picking on the current frame's spectrum, or by running a few ADMM iterations from uniform initialization and taking the resulting center frequencies.
 
@@ -367,8 +356,8 @@ SUBSEQUENT FRAMES (m = 1, 2, ...):
 
   2. ADAPTIVE CENTER FREQUENCY INITIALIZATION:
      a. Compute omega_k^{detected}(m) via quick peak detection on current spectrum
-     b. Compute delta_t = |prev_iteration_time - expected_time|
-     c. Determine gamma from adaptation logic
+     b. Compute delta_t = |iteration_time(m-1) - iteration_time(m-2)|
+     c. Determine gamma from Formula 20 piecewise mapping
      d. omega_k^{init}(m) = gamma * omega_k^{final}(m-1) + (1-gamma) * omega_k^{detected}(m)
 
   3. ADMM LOOP WITH ERROR MUTATION CHECK:
@@ -455,11 +444,11 @@ pub struct VmdConfig {
 /// PO-RSVMD specific config
 pub struct PoRsvmdConfig {
     pub base: VmdConfig,
-    pub gamma_default: f64,       // default rate learning factor (0.5)
-    pub gamma_stable: f64,        // gamma when signal is stable (0.7)
-    pub gamma_volatile: f64,      // gamma when signal changed (0.2)
-    pub time_stable_ratio: f64,   // delta_t < mean * ratio → stable (0.5)
-    pub time_volatile_ratio: f64, // delta_t > mean * ratio → volatile (2.0)
+    pub gamma_default: f64,  // default rate factor when delta_t < 0.1 (0.5)
+    /// Piecewise mapping from delta_t thresholds to gamma values (Formula 20)
+    /// Entries: [(threshold, gamma_value), ...] sorted descending by threshold
+    /// Default: [(0.8, 0.0), (0.6, 0.001), (0.4, 0.01), (0.2, 0.05), (0.1, 0.2)]
+    pub gamma_tiers: Vec<(f64, f64)>,
 }
 ```
 
@@ -682,7 +671,6 @@ pub struct PoRsvmdProcessor {
 
     /// Iteration time history for gamma adaptation
     prev_iteration_time: Option<Duration>,
-    iteration_time_ema: f64,  // exponential moving average of iteration times
 
     /// Current adaptive gamma
     gamma: f64,
@@ -753,13 +741,13 @@ fn compute_gamma(&mut self, iteration_time: Duration) -> f64 {
     if let Some(prev_time) = self.prev_iteration_time {
         let delta_t = (iteration_time.as_secs_f64() - prev_time.as_secs_f64()).abs();
 
-        if delta_t < self.iteration_time_ema * self.po_config.time_stable_ratio {
-            self.po_config.gamma_stable   // e.g., 0.7 — trust previous
-        } else if delta_t > self.iteration_time_ema * self.po_config.time_volatile_ratio {
-            self.po_config.gamma_volatile  // e.g., 0.2 — trust new detection
-        } else {
-            self.po_config.gamma_default   // e.g., 0.5 — equal blend
+        // Formula 20: piecewise mapping from delta_t to rate factor
+        for &(threshold, gamma_val) in &self.po_config.gamma_tiers {
+            if delta_t >= threshold {
+                return gamma_val;
+            }
         }
+        self.po_config.gamma_default  // delta_t < smallest threshold → stable
     } else {
         self.po_config.gamma_default
     }
@@ -881,7 +869,9 @@ pub struct PORSVMDProcessor {
 #[pymethods]
 impl PORSVMDProcessor {
     #[new]
-    #[pyo3(signature = (alpha=2000.0, k=3, tau=0.0, tol=1e-7, window_len=7200, step_size=1, max_iter=500, damping=0.99999, fft_reset_interval=0, gamma_default=0.5, gamma_stable=0.7, gamma_volatile=0.2, time_stable_ratio=0.5, time_volatile_ratio=2.0))]
+    #[pyo3(signature = (alpha=2000.0, k=3, tau=0.0, tol=1e-7, window_len=7200, step_size=1, max_iter=500, damping=0.99999, fft_reset_interval=0, gamma_default=0.5, gamma_tiers=None))]
+    /// gamma_tiers: Optional list of (threshold, gamma_value) tuples sorted descending.
+    /// Defaults to Formula 20: [(0.8, 0.0), (0.6, 0.001), (0.4, 0.01), (0.2, 0.05), (0.1, 0.2)]
     fn new(/* ... */) -> Self;
 
     fn update<'py>(
