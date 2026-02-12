@@ -137,3 +137,129 @@ class TestResetFft:
         # Should still produce valid output after reset
         modes, cfreqs = proc.update(np.zeros(1))
         assert modes.shape == (2, n)
+
+
+class TestReconstructionQuality:
+    def test_modes_sum_approximates_signal(self):
+        """Sum of decomposed modes should approximate the original signal."""
+        n = 512
+        signal = make_signal(n, freqs=(20, 80), amplitudes=(1.0, 0.5))
+
+        proc = RSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.1, tol=1e-7,
+            window_len=n, max_iter=500,
+        )
+        modes, _ = proc.update(signal)
+
+        reconstructed = modes.sum(axis=0)
+        error = np.linalg.norm(reconstructed - signal) / np.linalg.norm(signal)
+        assert error < 1.0, f"Reconstruction error too high: {error:.4f}"
+
+    def test_no_nan_in_output(self):
+        """Output should never contain NaN values."""
+        n = 256
+        signal = make_signal(n)
+
+        proc = RSVMDProcessor(alpha=2000.0, k=3, window_len=n, max_iter=500)
+        modes, cfreqs = proc.update(signal)
+
+        assert not np.any(np.isnan(modes)), "NaN found in modes"
+        assert not np.any(np.isnan(cfreqs)), "NaN found in center_freqs"
+
+
+class TestEdgeCases:
+    def test_single_mode_k1(self):
+        """K=1 should produce a single valid mode."""
+        n = 256
+        signal = make_signal(n, freqs=(20,), amplitudes=(1.0,))
+
+        proc = RSVMDProcessor(alpha=2000.0, k=1, window_len=n, max_iter=500)
+        modes, cfreqs = proc.update(signal)
+
+        assert modes.shape == (1, n)
+        assert cfreqs.shape == (1,)
+        assert not np.any(np.isnan(modes))
+
+    def test_large_k_more_modes_than_content(self):
+        """K > number of spectral peaks should still work."""
+        n = 256
+        signal = make_signal(n, freqs=(20, 80), amplitudes=(1.0, 0.5))
+
+        proc = RSVMDProcessor(alpha=2000.0, k=5, window_len=n, max_iter=500)
+        modes, cfreqs = proc.update(signal)
+
+        assert modes.shape == (5, n)
+        assert cfreqs.shape == (5,)
+        assert not np.any(np.isnan(modes))
+        assert not np.any(np.isnan(cfreqs))
+
+    def test_zero_signal(self):
+        """Zero signal should not crash or produce NaN."""
+        n = 128
+        proc = RSVMDProcessor(alpha=2000.0, k=2, window_len=n, max_iter=500)
+        modes, cfreqs = proc.update(np.zeros(n))
+
+        assert modes.shape == (2, n)
+        assert not np.any(np.isnan(modes))
+        assert not np.any(np.isnan(cfreqs))
+
+    def test_constant_signal(self):
+        """Constant signal should not crash or produce NaN."""
+        n = 128
+        proc = RSVMDProcessor(alpha=2000.0, k=2, window_len=n, max_iter=500)
+        modes, cfreqs = proc.update(np.full(n, 3.14))
+
+        assert modes.shape == (2, n)
+        assert not np.any(np.isnan(modes))
+        assert not np.any(np.isnan(cfreqs))
+
+
+class TestStepSizeGreaterThanOne:
+    def test_step_size_5(self):
+        """Streaming with step_size=5 produces valid output."""
+        n = 256
+        step = 5
+        total = n + step * 5
+        signal = make_signal(total, freqs=(20, 80), amplitudes=(1.0, 0.5))
+
+        proc = RSVMDProcessor(
+            alpha=2000.0, k=2, tau=0.1, tol=1e-7,
+            window_len=n, step_size=step, max_iter=500,
+        )
+
+        modes, _ = proc.update(signal[:n])
+        assert modes.shape == (2, n)
+
+        for i in range(5):
+            start = n + i * step
+            modes, cfreqs = proc.update(signal[start:start + step])
+            assert modes.shape == (2, n)
+            assert cfreqs.shape == (2,)
+
+    def test_wrong_step_size_after_init(self):
+        """Wrong number of samples after init with step_size>1 raises error."""
+        n = 128
+        step = 5
+        proc = RSVMDProcessor(window_len=n, step_size=step, k=2)
+        proc.update(np.zeros(n))
+        with pytest.raises(ValueError, match=f"Expected {step} samples"):
+            proc.update(np.zeros(1))
+
+
+class TestFftResetInterval:
+    def test_fft_reset_interval_produces_valid_output(self):
+        """FFT reset at interval doesn't break streaming."""
+        n = 128
+        total = n + 20
+        signal = make_signal(total)
+
+        proc = RSVMDProcessor(
+            alpha=2000.0, k=2, window_len=n, step_size=1,
+            max_iter=500, fft_reset_interval=5,
+        )
+
+        proc.update(signal[:n])
+        for i in range(20):
+            modes, cfreqs = proc.update(signal[n + i:n + i + 1])
+            assert modes.shape == (2, n)
+            assert not np.any(np.isnan(modes))

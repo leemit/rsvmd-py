@@ -124,7 +124,89 @@ class TestPOErrorHandling:
         with pytest.raises(ValueError, match="First call must provide"):
             proc.update(np.zeros(100))
 
+    def test_wrong_step_size_after_init(self):
+        """Wrong number of samples after initialization raises error."""
+        n = 128
+        proc = PORSVMDProcessor(window_len=n, step_size=1, k=2)
+        proc.update(np.zeros(n))
+        with pytest.raises(ValueError, match="Expected 1 samples"):
+            proc.update(np.zeros(5))
+
     def test_not_initialized(self):
         """initialized is False before first call."""
         proc = PORSVMDProcessor(window_len=128, k=3)
         assert not proc.initialized
+
+
+class TestPOResetFft:
+    def test_reset_fft_doesnt_crash(self):
+        """reset_fft() can be called on PO-RSVMD after initialization."""
+        n = 128
+        signal = make_signal(n)
+        proc = PORSVMDProcessor(window_len=n, k=2)
+        proc.update(signal)
+        proc.reset_fft()
+        modes, cfreqs = proc.update(np.zeros(1))
+        assert modes.shape == (2, n)
+
+
+class TestPOEdgeCases:
+    def test_zero_signal(self):
+        """PO-RSVMD on zero signal should not crash or produce NaN."""
+        n = 128
+        proc = PORSVMDProcessor(alpha=2000.0, k=2, window_len=n, max_iter=500)
+        modes, cfreqs = proc.update(np.zeros(n))
+
+        assert modes.shape == (2, n)
+        assert not np.any(np.isnan(modes))
+        assert not np.any(np.isnan(cfreqs))
+
+    def test_single_mode_k1(self):
+        """PO-RSVMD with K=1."""
+        n = 256
+        signal = make_signal(n, freqs=(20,), amplitudes=(1.0,))
+
+        proc = PORSVMDProcessor(alpha=2000.0, k=1, window_len=n, max_iter=500)
+        modes, cfreqs = proc.update(signal)
+
+        assert modes.shape == (1, n)
+        assert cfreqs.shape == (1,)
+        assert not np.any(np.isnan(modes))
+
+    def test_step_size_greater_than_one(self):
+        """PO-RSVMD with step_size > 1."""
+        n = 256
+        step = 5
+        total = n + step * 3
+        signal = make_signal(total)
+
+        proc = PORSVMDProcessor(
+            alpha=2000.0, k=3, tau=0.1, tol=1e-7,
+            window_len=n, step_size=step, max_iter=500,
+        )
+
+        proc.update(signal[:n])
+        for i in range(3):
+            start = n + i * step
+            modes, cfreqs = proc.update(signal[start:start + step])
+            assert modes.shape == (3, n)
+            assert cfreqs.shape == (3,)
+
+
+class TestPOReconstructionQuality:
+    def test_modes_no_nan_across_streaming(self):
+        """PO-RSVMD streaming should not produce NaN in any frame."""
+        n = 256
+        total = n + 20
+        signal = make_signal(total)
+
+        proc = PORSVMDProcessor(
+            alpha=2000.0, k=3, tau=0.1, tol=1e-7,
+            window_len=n, step_size=1, max_iter=500,
+        )
+
+        proc.update(signal[:n])
+        for i in range(20):
+            modes, cfreqs = proc.update(signal[n + i:n + i + 1])
+            assert not np.any(np.isnan(modes)), f"NaN in modes at frame {i}"
+            assert not np.any(np.isnan(cfreqs)), f"NaN in cfreqs at frame {i}"

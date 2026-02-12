@@ -451,4 +451,202 @@ mod tests {
         assert_eq!(proc.compute_gamma(0.15), 0.2);
         assert_eq!(proc.compute_gamma(0.05), 0.5);
     }
+
+    #[test]
+    fn test_po_rsvmd_initialize_wrong_length_returns_err() {
+        let config = PoRsvmdConfig::new(
+            VmdConfig {
+                window_len: 256,
+                k: 3,
+                ..Default::default()
+            },
+            0.5,
+        );
+        let mut proc = PoRsvmdProcessor::new(config);
+        let result = proc.initialize(&[0.0; 100]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_po_rsvmd_update_before_init_returns_err() {
+        let config = PoRsvmdConfig::new(
+            VmdConfig {
+                window_len: 256,
+                k: 3,
+                step_size: 1,
+                ..Default::default()
+            },
+            0.5,
+        );
+        let mut proc = PoRsvmdProcessor::new(config);
+        let result = proc.update(&[0.0]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not initialized"));
+    }
+
+    #[test]
+    fn test_po_rsvmd_update_wrong_step_size_returns_err() {
+        let n = 128;
+        let signal = make_signal(n);
+        let config = PoRsvmdConfig::new(
+            VmdConfig {
+                window_len: n,
+                k: 2,
+                step_size: 1,
+                ..Default::default()
+            },
+            0.5,
+        );
+        let mut proc = PoRsvmdProcessor::new(config);
+        proc.initialize(&signal).unwrap();
+
+        let result = proc.update(&[1.0, 2.0, 3.0]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Expected 1 samples"));
+    }
+
+    #[test]
+    fn test_error_mutation_detection_stops_early() {
+        // Use max_iter=1 to force only 1 ADMM iteration per frame,
+        // which means the error mutation check has limited room.
+        // Instead, we verify that PO-RSVMD uses <= iterations compared to
+        // max_iter on a signal where over-decomposition is possible.
+        let n = 256;
+        let total = n + 10;
+        let signal = make_signal(total);
+
+        let config = PoRsvmdConfig::new(
+            VmdConfig {
+                alpha: 2000.0,
+                k: 3,
+                tau: 0.1,
+                tol: 1e-7,
+                window_len: n,
+                step_size: 1,
+                max_iter: 500,
+                ..Default::default()
+            },
+            0.5,
+        );
+
+        let mut proc = PoRsvmdProcessor::new(config);
+        proc.initialize(&signal[..n]).unwrap();
+
+        // Run warm frames — error mutation may trigger early stopping
+        let mut saw_early_stop = false;
+        for i in 0..10 {
+            let output = proc.update(&signal[n + i..n + i + 1]).unwrap();
+            if output.iterations < 500 {
+                saw_early_stop = true;
+            }
+            // Regardless, output should be valid
+            assert_eq!(output.modes.len(), 3);
+            for mode in &output.modes {
+                for &v in mode {
+                    assert!(!v.is_nan());
+                }
+            }
+        }
+        // With warm starting and tau > 0, we should converge or stop early
+        assert!(saw_early_stop, "Expected at least one frame to stop before max_iter");
+    }
+
+    #[test]
+    fn test_gamma_adaptation_under_signal_change() {
+        // Build a signal that changes character mid-stream:
+        // first half is low-frequency, then we inject a high-frequency burst
+        let n = 256;
+        let dt = 1.0 / n as f64;
+
+        // Stationary segment
+        let mut signal: Vec<f64> = (0..n + 20)
+            .map(|i| {
+                let t = i as f64 * dt;
+                (2.0 * PI * 10.0 * t).sin() + 0.5 * (2.0 * PI * 30.0 * t).sin()
+            })
+            .collect();
+
+        // Add a high-frequency burst to later samples
+        for i in n..n + 20 {
+            let t = i as f64 * dt;
+            signal[i] += 2.0 * (2.0 * PI * 200.0 * t).sin();
+        }
+
+        let config = PoRsvmdConfig::new(
+            VmdConfig {
+                alpha: 2000.0,
+                k: 3,
+                tau: 0.1,
+                tol: 1e-7,
+                window_len: n,
+                step_size: 1,
+                max_iter: 500,
+                ..Default::default()
+            },
+            0.5,
+        );
+
+        let mut proc = PoRsvmdProcessor::new(config);
+        proc.initialize(&signal[..n]).unwrap();
+
+        // Process frames and track gamma values
+        let mut gammas = Vec::new();
+        for i in 0..20 {
+            proc.update(&signal[n + i..n + i + 1]).unwrap();
+            gammas.push(proc.gamma());
+        }
+
+        // All gamma values should be valid
+        for &g in &gammas {
+            assert!(g >= 0.0 && g <= 1.0, "Gamma out of range: {}", g);
+        }
+    }
+
+    #[test]
+    fn test_po_rsvmd_auto_initialize() {
+        let n = 256;
+        let signal = make_signal(n);
+
+        let config = PoRsvmdConfig::new(
+            VmdConfig {
+                window_len: n,
+                k: 3,
+                ..Default::default()
+            },
+            0.5,
+        );
+
+        let mut proc = PoRsvmdProcessor::new(config);
+        // Passing window_len samples to update should auto-initialize
+        let output = proc.update(&signal).unwrap();
+        assert!(proc.initialized());
+        assert_eq!(output.modes.len(), 3);
+    }
+
+    #[test]
+    fn test_po_rsvmd_zero_signal() {
+        let n = 128;
+        let signal = vec![0.0; n];
+
+        let config = PoRsvmdConfig::new(
+            VmdConfig {
+                alpha: 2000.0,
+                k: 2,
+                window_len: n,
+                max_iter: 500,
+                ..Default::default()
+            },
+            0.5,
+        );
+
+        let mut proc = PoRsvmdProcessor::new(config);
+        let output = proc.initialize(&signal).unwrap();
+
+        assert_eq!(output.modes.len(), 2);
+        for mode in &output.modes {
+            for &v in mode {
+                assert!(!v.is_nan(), "NaN on zero signal");
+            }
+        }
+    }
 }

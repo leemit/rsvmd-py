@@ -8,6 +8,7 @@ use crate::sliding_dft::SlidingDft;
 use crate::vmd_core::{VmdConfig, VmdSolver, VmdState};
 
 /// Output from RSVMD processing.
+#[derive(Debug)]
 pub struct RsvmdOutput {
     /// Decomposed modes in time domain, shape K x window_len.
     pub modes: Vec<Vec<f64>>,
@@ -318,5 +319,355 @@ mod tests {
         let output = proc.update(&signal).unwrap();
         assert!(proc.initialized());
         assert_eq!(output.modes.len(), 3);
+    }
+
+    #[test]
+    fn test_initialize_wrong_length_returns_err() {
+        let config = VmdConfig {
+            window_len: 256,
+            k: 3,
+            ..Default::default()
+        };
+        let mut proc = RsvmdProcessor::new(config);
+        let result = proc.initialize(&[0.0; 100]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("exactly 256 samples"));
+    }
+
+    #[test]
+    fn test_update_before_init_returns_err() {
+        let config = VmdConfig {
+            window_len: 256,
+            k: 3,
+            step_size: 1,
+            ..Default::default()
+        };
+        let mut proc = RsvmdProcessor::new(config);
+        let result = proc.update(&[0.0]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not initialized"));
+    }
+
+    #[test]
+    fn test_update_wrong_step_size_returns_err() {
+        let n = 128;
+        let signal = make_signal(n);
+        let config = VmdConfig {
+            window_len: n,
+            k: 2,
+            step_size: 1,
+            ..Default::default()
+        };
+        let mut proc = RsvmdProcessor::new(config);
+        proc.initialize(&signal).unwrap();
+
+        let result = proc.update(&[1.0, 2.0, 3.0]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Expected 1 samples"));
+    }
+
+    #[test]
+    fn test_time_domain_reconstruction_quality() {
+        let n = 512;
+        let signal = make_signal(n);
+
+        // Use tau > 0 to enforce reconstruction constraint via dual variable
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 3,
+            tau: 0.1,
+            tol: 1e-7,
+            window_len: n,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        let output = proc.initialize(&signal).unwrap();
+
+        // Sum of modes in time domain should capture most signal energy
+        let mut reconstructed = vec![0.0; n];
+        for mode in &output.modes {
+            for i in 0..n {
+                reconstructed[i] += mode[i];
+            }
+        }
+
+        let mut err_sq = 0.0;
+        let mut sig_sq = 0.0;
+        for i in 0..n {
+            err_sq += (reconstructed[i] - signal[i]).powi(2);
+            sig_sq += signal[i].powi(2);
+        }
+        let relative_error = (err_sq / sig_sq).sqrt();
+
+        assert!(
+            relative_error < 1.0,
+            "Time-domain reconstruction error too high: {:.4}",
+            relative_error
+        );
+    }
+
+    #[test]
+    fn test_streaming_reconstruction_stability() {
+        let n = 256;
+        let total = n + 20;
+        let signal = make_signal(total);
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 3,
+            tau: 0.1,
+            tol: 1e-7,
+            window_len: n,
+            step_size: 1,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        proc.initialize(&signal[..n]).unwrap();
+
+        // Track reconstruction errors across frames
+        let mut errors = Vec::new();
+        for i in 0..20 {
+            let output = proc.update(&signal[n + i..n + i + 1]).unwrap();
+            let window = &signal[i + 1..i + 1 + n];
+
+            let mut reconstructed = vec![0.0; n];
+            for mode in &output.modes {
+                for j in 0..n {
+                    reconstructed[j] += mode[j];
+                }
+            }
+
+            let mut err_sq = 0.0;
+            let mut sig_sq = 0.0;
+            for j in 0..n {
+                err_sq += (reconstructed[j] - window[j]).powi(2);
+                sig_sq += window[j].powi(2);
+            }
+            errors.push((err_sq / sig_sq).sqrt());
+        }
+
+        // Errors should not blow up over time
+        for (i, &e) in errors.iter().enumerate() {
+            assert!(
+                e < 1.0,
+                "Reconstruction error at frame {} is too high: {:.4}",
+                i, e
+            );
+        }
+
+        // Error should not grow monotonically (stability check)
+        let last = errors[errors.len() - 1];
+        let first = errors[0];
+        assert!(
+            last < first * 3.0,
+            "Error grew too much: first={:.4}, last={:.4}",
+            first, last
+        );
+    }
+
+    #[test]
+    fn test_single_mode_k1() {
+        let n = 256;
+        let dt = 1.0 / n as f64;
+        let signal: Vec<f64> = (0..n)
+            .map(|i| (2.0 * PI * 20.0 * i as f64 * dt).sin())
+            .collect();
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 1,
+            tau: 0.0,
+            tol: 1e-7,
+            window_len: n,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        let output = proc.initialize(&signal).unwrap();
+
+        assert_eq!(output.modes.len(), 1);
+        assert_eq!(output.modes[0].len(), n);
+
+        // Single mode should capture most of the signal energy
+        let mut err_sq = 0.0;
+        let mut sig_sq = 0.0;
+        for i in 0..n {
+            err_sq += (output.modes[0][i] - signal[i]).powi(2);
+            sig_sq += signal[i].powi(2);
+        }
+        let relative_error = (err_sq / sig_sq).sqrt();
+        assert!(
+            relative_error < 1.0,
+            "K=1 reconstruction error too high: {:.4}",
+            relative_error
+        );
+
+        // No NaN values
+        for &v in &output.modes[0] {
+            assert!(!v.is_nan(), "K=1 mode has NaN");
+        }
+    }
+
+    #[test]
+    fn test_large_k_more_modes_than_content() {
+        let n = 256;
+        let dt = 1.0 / n as f64;
+        // Only 2 sinusoids, but K=5
+        let signal: Vec<f64> = (0..n)
+            .map(|i| {
+                let t = i as f64 * dt;
+                (2.0 * PI * 20.0 * t).sin() + 0.5 * (2.0 * PI * 80.0 * t).sin()
+            })
+            .collect();
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 5,
+            tau: 0.0,
+            tol: 1e-7,
+            window_len: n,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        let output = proc.initialize(&signal).unwrap();
+
+        // Should not crash, produce 5 modes
+        assert_eq!(output.modes.len(), 5);
+        assert_eq!(output.center_freqs.len(), 5);
+
+        // No NaN in output
+        for freq in &output.center_freqs {
+            assert!(!freq.is_nan(), "Center freq is NaN");
+        }
+        for mode in &output.modes {
+            for &v in mode {
+                assert!(!v.is_nan(), "Mode value is NaN");
+            }
+        }
+    }
+
+    #[test]
+    fn test_zero_signal() {
+        let n = 128;
+        let signal = vec![0.0; n];
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 2,
+            tau: 0.0,
+            tol: 1e-7,
+            window_len: n,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        let output = proc.initialize(&signal).unwrap();
+
+        assert_eq!(output.modes.len(), 2);
+        // No NaN
+        for mode in &output.modes {
+            for &v in mode {
+                assert!(!v.is_nan(), "Mode value is NaN on zero signal");
+            }
+        }
+        for &f in &output.center_freqs {
+            assert!(!f.is_nan(), "Center freq is NaN on zero signal");
+        }
+    }
+
+    #[test]
+    fn test_constant_signal() {
+        let n = 128;
+        let signal = vec![3.14; n];
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 2,
+            tau: 0.0,
+            tol: 1e-7,
+            window_len: n,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        let output = proc.initialize(&signal).unwrap();
+
+        assert_eq!(output.modes.len(), 2);
+        for mode in &output.modes {
+            for &v in mode {
+                assert!(!v.is_nan(), "Mode value is NaN on constant signal");
+            }
+        }
+    }
+
+    #[test]
+    fn test_step_size_greater_than_one() {
+        let n = 256;
+        let step = 5;
+        let total = n + step * 5;
+        let signal = make_signal(total);
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 3,
+            tau: 0.0,
+            tol: 1e-7,
+            window_len: n,
+            step_size: step,
+            max_iter: 500,
+            ..Default::default()
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        proc.initialize(&signal[..n]).unwrap();
+
+        for i in 0..5 {
+            let start = n + i * step;
+            let output = proc.update(&signal[start..start + step]).unwrap();
+            assert_eq!(output.modes.len(), 3);
+            assert_eq!(output.modes[0].len(), n);
+        }
+    }
+
+    #[test]
+    fn test_fft_reset_interval() {
+        let n = 128;
+        let total = n + 20;
+        let signal = make_signal(total);
+
+        let config = VmdConfig {
+            alpha: 2000.0,
+            k: 2,
+            tau: 0.0,
+            tol: 1e-7,
+            window_len: n,
+            step_size: 1,
+            max_iter: 500,
+            damping: 0.99999,
+            fft_reset_interval: 5,
+        };
+
+        let mut proc = RsvmdProcessor::new(config);
+        proc.initialize(&signal[..n]).unwrap();
+
+        // Run through frames that cross the reset interval
+        for i in 0..20 {
+            let output = proc.update(&signal[n + i..n + i + 1]).unwrap();
+            assert_eq!(output.modes.len(), 2);
+            for mode in &output.modes {
+                for &v in mode {
+                    assert!(!v.is_nan(), "NaN after FFT reset at frame {}", i);
+                }
+            }
+        }
     }
 }

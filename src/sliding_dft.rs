@@ -293,4 +293,85 @@ mod tests {
             assert!(diff < 1e-10, "Bin {} differs after reset: diff={}", k, diff);
         }
     }
+
+    #[test]
+    fn test_slide_block_mismatched_lengths_returns_err() {
+        let n = 128;
+        let signal = make_test_signal(n);
+        let mut sdft = SlidingDft::new(&signal, 1.0, 0);
+
+        let result = sdft.slide_block(&[1.0, 2.0, 3.0], &[1.0, 2.0]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must match"));
+    }
+
+    #[test]
+    fn test_reset_from_buffer_wrong_length_returns_err() {
+        let n = 128;
+        let signal = make_test_signal(n);
+        let mut sdft = SlidingDft::new(&signal, 1.0, 0);
+
+        let result = sdft.reset_from_buffer(&[1.0; 64]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must match N"));
+    }
+
+    #[test]
+    fn test_block_slide_step5_matches_full_fft() {
+        let n = 256;
+        let s = 5;
+        let signal = make_test_signal(n + s);
+        let mut sdft = SlidingDft::new(&signal[..n], 1.0, 0);
+
+        sdft.slide_block(&signal[n..n + s], &signal[0..s]).unwrap();
+
+        let expected = SlidingDft::compute_fft(&signal[s..s + n]);
+        for k in 0..n {
+            let diff = (sdft.bins[k] - expected[k]).norm();
+            assert!(
+                diff < 1e-8,
+                "Bin {} differs for step_size=5: diff={}",
+                k, diff
+            );
+        }
+    }
+
+    #[test]
+    fn test_periodic_fft_reset_fires() {
+        let n = 64;
+        let signal = make_test_signal(n + 20);
+        let mut sdft = SlidingDft::new(&signal[..n], 0.99999, 5);
+
+        // Slide 4 times — no reset yet
+        for i in 0..4 {
+            sdft.slide_one(signal[n + i], signal[i]);
+        }
+        assert!(!sdft.needs_reset());
+
+        // 5th slide triggers reset
+        sdft.slide_one(signal[n + 4], signal[4]);
+        assert!(sdft.needs_reset());
+    }
+
+    #[test]
+    fn test_damped_sdft_reset_recovers_exact() {
+        let n = 128;
+        let signal = make_test_signal(n + 100);
+        let mut sdft = SlidingDft::new(&signal[..n], 0.99999, 0);
+
+        // Slide with damping — introduces drift
+        for i in 0..100 {
+            sdft.slide_one(signal[n + i], signal[i]);
+        }
+
+        // Reset should recover exact spectrum
+        let window = &signal[100..100 + n];
+        sdft.reset_from_buffer(window).unwrap();
+
+        let expected = SlidingDft::compute_fft(window);
+        for k in 0..n {
+            let diff = (sdft.bins[k] - expected[k]).norm();
+            assert!(diff < 1e-10, "Bin {} not exact after reset: diff={}", k, diff);
+        }
+    }
 }
