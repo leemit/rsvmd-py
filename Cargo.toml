@@ -1,0 +1,24 @@
+[package]
+name = "rsvmd"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Recursive Sliding Variational Mode Decomposition with Python bindings"
+
+[lib]
+name = "rsvmd"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+numpy = "0.23"
+num-complex = "0.4"
+rustfft = "6.2"
+
+[dev-dependencies]
+criterion = "0.5"
+approx = "0.5"
+
+[[bench]]
+name = "benchmarks"
+harness = false

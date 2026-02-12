@@ -2,6 +2,9 @@
 
 A Rust implementation of RSVMD and PO-RSVMD with Python bindings via PyO3, designed for real-time signal decomposition in streaming/sliding-window applications.
 
+Python 3.13.5 in this project
+and use uv instead of pip for all python lib management
+
 ## Table of Contents
 
 1. [Project Overview](#1-project-overview)
