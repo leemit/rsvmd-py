@@ -119,7 +119,7 @@ RSVMDProcessor(
 | `damping` | `float` | `0.99999` | Sliding DFT damping factor. Values < 1 prevent numerical drift accumulation. |
 | `fft_reset_interval` | `int` | `0` | Recompute a full FFT every N frames to reset drift. 0 disables. |
 
-This is configuring a sliding-window, recursive version of Variational Mode Decomposition (VMD), so each argument controls either the decomposition physics (how modes look) or the streaming / numerical aspects.
+The above RSVMDProcessor() call is configuring a sliding-window, recursive version of Variational Mode Decomposition (VMD), so each argument controls either the decomposition physics (how modes look) or the streaming / numerical aspects.
 
 **Core VMD hyperparameters**
 
