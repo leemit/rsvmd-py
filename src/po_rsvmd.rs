@@ -892,6 +892,131 @@ mod tests {
     }
 
     #[test]
+    fn test_po_rsvmd_constant_signal() {
+        let n = 128;
+        let signal = vec![3.14; n];
+
+        let config = PoRsvmdConfig::new(
+            VmdConfig {
+                alpha: 2000.0,
+                k: 2,
+                tol: 1e-7,
+                window_len: n,
+                max_iter: 500,
+                ..Default::default()
+            },
+            0.5,
+        );
+
+        let mut proc = PoRsvmdProcessor::new(config);
+        let output = proc.initialize(&signal).unwrap();
+
+        assert_eq!(output.modes.len(), 2);
+        for mode in &output.modes {
+            for &v in mode {
+                assert!(!v.is_nan(), "Mode value is NaN on constant signal");
+            }
+        }
+    }
+
+    #[test]
+    fn test_po_rsvmd_fft_reset_interval() {
+        let n = 128;
+        let total = n + 20;
+        let signal = make_signal(total);
+
+        let config = PoRsvmdConfig::new(
+            VmdConfig {
+                alpha: 2000.0,
+                k: 2,
+                tau: 0.0,
+                tol: 1e-7,
+                window_len: n,
+                step_size: 1,
+                max_iter: 500,
+                damping: 0.99999,
+                fft_reset_interval: 5,
+            },
+            0.5,
+        );
+
+        let mut proc = PoRsvmdProcessor::new(config);
+        proc.initialize(&signal[..n]).unwrap();
+
+        for i in 0..20 {
+            let output = proc.update(&signal[n + i..n + i + 1]).unwrap();
+            assert_eq!(output.modes.len(), 2);
+            for mode in &output.modes {
+                for &v in mode {
+                    assert!(!v.is_nan(), "NaN after FFT reset at PO frame {}", i);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_po_rsvmd_step_size_greater_than_one() {
+        let n = 256;
+        let step = 5;
+        let total = n + step * 5;
+        let signal = make_signal(total);
+
+        let config = PoRsvmdConfig::new(
+            VmdConfig {
+                alpha: 2000.0,
+                k: 3,
+                tol: 1e-7,
+                window_len: n,
+                step_size: step,
+                max_iter: 500,
+                ..Default::default()
+            },
+            0.5,
+        );
+
+        let mut proc = PoRsvmdProcessor::new(config);
+        proc.initialize(&signal[..n]).unwrap();
+
+        for i in 0..5 {
+            let start = n + i * step;
+            let output = proc.update(&signal[start..start + step]).unwrap();
+            assert_eq!(output.modes.len(), 3);
+            assert_eq!(output.modes[0].len(), n);
+        }
+    }
+
+    #[test]
+    fn test_po_rsvmd_single_mode_k1() {
+        let n = 256;
+        let dt = 1.0 / n as f64;
+        let signal: Vec<f64> = (0..n)
+            .map(|i| (2.0 * PI * 20.0 * i as f64 * dt).sin())
+            .collect();
+
+        let config = PoRsvmdConfig::new(
+            VmdConfig {
+                alpha: 2000.0,
+                k: 1,
+                tol: 1e-7,
+                window_len: n,
+                max_iter: 500,
+                ..Default::default()
+            },
+            0.5,
+        );
+
+        let mut proc = PoRsvmdProcessor::new(config);
+        let output = proc.initialize(&signal).unwrap();
+
+        assert_eq!(output.modes.len(), 1);
+        assert_eq!(output.modes[0].len(), n);
+
+        for &v in &output.modes[0] {
+            assert!(!v.is_nan(), "K=1 PO mode has NaN");
+        }
+    }
+
+    #[test]
     fn test_po_rsvmd_zero_signal() {
         let n = 128;
         let signal = vec![0.0; n];

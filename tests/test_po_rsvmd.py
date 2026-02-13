@@ -155,6 +155,25 @@ class TestPOResetFft:
         assert modes.shape == (2, n)
 
 
+class TestPOFftResetInterval:
+    def test_fft_reset_interval_produces_valid_output(self):
+        """FFT reset at interval doesn't break PO-RSVMD streaming."""
+        n = 128
+        total = n + 20
+        signal = make_signal(total)
+
+        proc = PORSVMDProcessor(
+            alpha=2000.0, k=2, window_len=n, step_size=1,
+            max_iter=500, fft_reset_interval=5,
+        )
+
+        proc.update(signal[:n])
+        for i in range(20):
+            modes, cfreqs = proc.update(signal[n + i:n + i + 1])
+            assert modes.shape == (2, n)
+            assert not np.any(np.isnan(modes))
+
+
 class TestPOEdgeCases:
     def test_zero_signal(self):
         """PO-RSVMD on zero signal should not crash or produce NaN."""
@@ -177,6 +196,29 @@ class TestPOEdgeCases:
         assert modes.shape == (1, n)
         assert cfreqs.shape == (1,)
         assert not np.any(np.isnan(modes))
+
+    def test_constant_signal(self):
+        """Constant signal should not crash or produce NaN."""
+        n = 128
+        proc = PORSVMDProcessor(alpha=2000.0, k=2, window_len=n, max_iter=500)
+        modes, cfreqs = proc.update(np.full(n, 3.14))
+
+        assert modes.shape == (2, n)
+        assert not np.any(np.isnan(modes))
+        assert not np.any(np.isnan(cfreqs))
+
+    def test_large_k_more_modes_than_content(self):
+        """K > number of spectral peaks should still work."""
+        n = 256
+        signal = make_signal(n, freqs=(20, 80), amplitudes=(1.0, 0.5))
+
+        proc = PORSVMDProcessor(alpha=2000.0, k=5, window_len=n, max_iter=500)
+        modes, cfreqs = proc.update(signal)
+
+        assert modes.shape == (5, n)
+        assert cfreqs.shape == (5,)
+        assert not np.any(np.isnan(modes))
+        assert not np.any(np.isnan(cfreqs))
 
     def test_step_size_greater_than_one(self):
         """PO-RSVMD with step_size > 1."""
