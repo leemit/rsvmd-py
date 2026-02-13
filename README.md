@@ -17,7 +17,7 @@ Recursive Sliding Variational Mode Decomposition (RSVMD & PO-RSVMD) — a Rust i
 - **PO-RSVMD**: Error mutation detection + adaptive gamma for robustness under interference
 - **Zero-copy Python interop**: numpy arrays in/out via PyO3, no data copies
 - **Result-based error handling**: no panics in the Rust core; all errors returned as `PyErr`
-- **113 tests**: 61 Rust unit tests + 52 Python integration tests, including verification of claims from [1,2,3]
+- **120 tests**: 65 Rust unit tests + 55 Python integration tests, including verification of claims from [1,2,3]
 
 ## Installation
 
@@ -254,7 +254,7 @@ src/
 
 The test suite verifies both implementation correctness and specific claims from [1,2,3].
 
-**Test counts**: 61 Rust unit tests + 52 Python integration tests = **113 tests total**.
+**Test counts**: 65 Rust unit tests + 55 Python integration tests = **120 tests total**.
 
 ### ADMM equation verification (Rust)
 
@@ -317,7 +317,7 @@ These tests verify that the core ADMM update formulas match the equations in [1]
 
 ### Stability and edge cases
 
-Additional tests cover: zero signals, constant signals, single-mode decomposition (K=1), K larger than signal content, step_size > 1, FFT reset intervals, 200-frame long streaming, error handling for wrong input sizes, and uninitialized processor access.
+Both RSVMD and PO-RSVMD have full parity coverage for: zero signals, constant signals, single-mode decomposition (K=1), K larger than signal content, step_size > 1, FFT reset intervals, 200-frame long streaming, error handling for wrong input sizes, and uninitialized processor access.
 
 ## Benchmarks & Performance
 
@@ -371,7 +371,7 @@ rsvmd-py/
 │       └── __init__.pyi         # Type stubs for IDE support
 ├── tests/
 │   ├── test_rsvmd.py            # 27 Python tests for RSVMDProcessor
-│   ├── test_po_rsvmd.py         # 25 Python tests for PORSVMDProcessor
+│   ├── test_po_rsvmd.py         # 28 Python tests for PORSVMDProcessor
 │   └── test_performance.py      # Manual performance benchmark
 └── benches/
     └── benchmarks.rs            # Criterion benchmarks
