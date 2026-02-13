@@ -17,7 +17,7 @@ Recursive Sliding Variational Mode Decomposition (RSVMD & PO-RSVMD) — a Rust i
 - **PO-RSVMD**: Error mutation detection + adaptive gamma for robustness under interference
 - **Zero-copy Python interop**: numpy arrays in/out via PyO3, no data copies
 - **Result-based error handling**: no panics in the Rust core; all errors returned as `PyErr`
-- **113 tests**: 61 Rust unit tests + 52 Python integration tests, including paper-claim verification
+- **113 tests**: 61 Rust unit tests + 52 Python integration tests, including verification of claims from [1,2,3]
 
 ## Installation
 
@@ -150,7 +150,7 @@ PORSVMDProcessor(
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `gamma_default` | `float` | `0.5` | Rate learning factor when iteration time is stable (`delta_t < 0.1`). |
-| `gamma_tiers` | `list[tuple[float, float]] \| None` | `None` | Piecewise `(threshold, gamma)` mapping sorted descending. Default: `[(0.8, 0.0), (0.6, 0.001), (0.4, 0.01), (0.2, 0.05), (0.1, 0.2)]` (Formula 20). |
+| `gamma_tiers` | `list[tuple[float, float]] \| None` | `None` | Piecewise `(threshold, gamma)` mapping sorted descending. Default: `[(0.8, 0.0), (0.6, 0.001), (0.4, 0.01), (0.2, 0.05), (0.1, 0.2)]` (Formula 20 from [3]). |
 
 **Additional property:**
 
@@ -207,9 +207,9 @@ where r is a damping factor (default 0.99999) for numerical stability. Cost: O(N
 
 ### PO-RSVMD extensions
 
-**Error mutation detection** (Section 4.1 of the paper): Monitors reconstruction error between ADMM iterations. If error *increases* (over-decomposition), the solver rolls back to the previous iteration and terminates early.
+**Error mutation detection** (Section 4.1 of [3]): Monitors reconstruction error between ADMM iterations. If error *increases* (over-decomposition), the solver rolls back to the previous iteration and terminates early.
 
-**Adaptive center frequency blending** (Formula 20): Instead of directly warm-starting from previous center frequencies, blends them with freshly detected peaks:
+**Adaptive center frequency blending** (Formula 20 from [3]): Instead of directly warm-starting from previous center frequencies, blends them with freshly detected peaks:
 
 ```
 ω_k^init(m) = γ · ω_k^final(m-1) + (1-γ) · ω_k^detected(m)
@@ -245,20 +245,20 @@ src/
 
 - **Rust for the inner loop**: The hot path is complex Wiener filtering per frequency bin × K modes × ADMM iterations × sliding frames. Rust eliminates Python overhead and enables SIMD-friendly data layouts.
 - **Ownership for state safety**: Recursive state (DFT bins, center frequencies, mode spectra) persists across calls. Rust's ownership model prevents aliasing bugs that are common in stateful numerical code.
-- **Gauss-Seidel mode ordering**: Mode updates use the most recently computed values for modes i < k (already updated this iteration) rather than all values from the previous iteration (Jacobi). This matches the paper and improves convergence.
+- **Gauss-Seidel mode ordering**: Mode updates use the most recently computed values for modes i < k (already updated this iteration) rather than all values from the previous iteration (Jacobi). This matches [1] and improves convergence.
 - **Result-based errors**: All public Rust functions return `Result<_, _>`. Invalid inputs (wrong array length, update before init) produce Python exceptions, not panics.
 - **Damped SDFT with periodic reset**: The damping factor r < 1 bounds rounding-error growth. Optional periodic full-FFT recomputation (`fft_reset_interval`) provides a hard reset for very long streams.
 - **Zero-copy numpy interop**: Input arrays are read via `PyReadonlyArray1` (no copy). Output arrays are allocated as numpy arrays directly.
 
 ## Paper Validation & Test Suite
 
-The test suite verifies both implementation correctness and specific claims from the academic papers.
+The test suite verifies both implementation correctness and specific claims from [1,2,3].
 
 **Test counts**: 61 Rust unit tests + 52 Python integration tests = **113 tests total**.
 
 ### ADMM equation verification (Rust)
 
-These tests verify that the core ADMM update formulas match the paper's equations:
+These tests verify that the core ADMM update formulas match the equations in [1]:
 
 | Test | What it verifies |
 |------|-----------------|
@@ -279,10 +279,10 @@ These tests verify that the core ADMM update formulas match the paper's equation
 | `test_rsvmd::TestPaperClaims::test_mode_spectral_separation` | Python-side spectral concentration check |
 | `test_rsvmd::TestPaperClaims::test_mode_cross_correlation_low` | Python-side cross-correlation check |
 
-### RSVMD claims
+### RSVMD claims [2]
 
-| Paper claim | Test |
-|-------------|------|
+| Claim | Test |
+|-------|------|
 | Streaming RSVMD matches batch VMD center frequencies | `rsvmd_core::test_rsvmd_matches_batch_vmd_on_stationary_signal` |
 | Warm frames converge in 2–5 iterations (with τ=0) | `rsvmd_core::test_warm_converges_within_5` |
 | Warm frames converge in fewer iterations than cold start | `rsvmd_core::test_warm_start_fewer_iterations` |
@@ -291,10 +291,10 @@ These tests verify that the core ADMM update formulas match the paper's equation
 | Python: warm converges within 10 iterations | `test_rsvmd::TestPaperClaims::test_warm_converges_within_10` |
 | Python: RSVMD matches batch VMD | `test_rsvmd::TestPaperClaims::test_rsvmd_matches_batch_vmd` |
 
-### PO-RSVMD claims
+### PO-RSVMD claims [3]
 
-| Paper claim | Test |
-|-------------|------|
+| Claim | Test |
+|-------|------|
 | Error mutation detected and stops iteration early | `po_rsvmd::test_error_mutation_detection_stops_early` |
 | Gamma adapts under signal change | `po_rsvmd::test_gamma_adaptation_under_signal_change` |
 | Gamma blending formula matches boundary values | `po_rsvmd::test_gamma_blending_formula_boundary_values` |
