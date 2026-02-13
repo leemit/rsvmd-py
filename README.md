@@ -119,6 +119,28 @@ RSVMDProcessor(
 | `damping` | `float` | `0.99999` | Sliding DFT damping factor. Values < 1 prevent numerical drift accumulation. |
 | `fft_reset_interval` | `int` | `0` | Recompute a full FFT every N frames to reset drift. 0 disables. |
 
+This is configuring a sliding-window, recursive version of Variational Mode Decomposition (VMD), so each argument controls either the decomposition physics (how modes look) or the streaming / numerical aspects.
+
+**Core VMD hyperparameters**
+
+- **`alpha=2000.0`** — Controls the bandwidth penalty of each mode: larger alpha forces each mode to be more narrowband around its center frequency, giving smoother, more "pure" oscillatory modes at the cost of less flexibility.
+- **`k=3`** — Number of modes (IMFs) to extract from the signal in each window. The signal in each window is modeled as the sum of 3 intrinsic modes plus (possibly) residual.
+- **`tau=0.0`** — Noise tolerance / dual ascent step size. Setting tau=0 corresponds to an exact reconstruction constraint (no slack for noise), i.e., the decomposition strictly fits the data in each window rather than allowing a soft data-fidelity term.
+- **`tol=1e-7`** — Convergence tolerance for the ADMM / iterative VMD updates. When the change in modes / frequencies between iterations falls below this threshold, the algorithm stops for that frame.
+
+**Sliding-window / streaming controls**
+
+- **`window_len=7200`** — Length of each processing window in samples. The algorithm decomposes the signal chunk-by-chunk, each chunk containing 7200 samples (e.g., 2 hours if your sampling rate is 1 Hz).
+- **`step_size=1`** — How far the window moves each time. 1 means a fully sliding window, advancing by 1 sample, giving maximal temporal resolution but highest computational cost.
+- **`max_iter=500`** — Maximum number of ADMM iterations per window. This caps run time: the frame stops iterating when either convergence (tol) is reached or this limit is hit.
+
+**Streaming FFT / numerical-stability controls**
+
+- **`damping=0.99999`** — Damping factor used in the sliding DFT (SDFT) updates to maintain numerical stability and gently "forget" old samples. Values extremely close to 1 keep long memory; smaller values would introduce more decay but more stability.
+- **`fft_reset_interval=0`** — How often to discard the incremental SDFT state and recompute a full FFT from scratch. 0 means "never reset," relying entirely on the recursive updates; a positive integer (e.g., 10000) would trigger periodic full recomputes to control numerical drift.
+
+Put together, this configuration says: "Decompose each 7200-sample sliding window (shifted by 1 sample) into 3 very narrowband modes, enforcing near-exact reconstruction with tight convergence (1e-7), up to 500 iterations per window, using a highly persistent but slightly damped SDFT and no periodic FFT resets."
+
 **Methods:**
 
 | Method | Returns | Description |
